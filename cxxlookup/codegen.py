@@ -31,6 +31,7 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
+import string
 
 import numpy as np
 
@@ -47,3 +48,32 @@ def most_common_element(arr):
     """Return the most common element of a numpy array"""
     u, indices = np.unique(arr, return_inverse=True)
     return u[np.argmax(np.bincount(indices))]
+
+
+def make_code(base, values, hole):
+    # FIXME: The current version is unusable in practice.
+    code = 'inline uint32_t lookup(uint32_t c) noexcept {\n'
+    code += '\tswitch (c) {\n'
+    for i, v in enumerate(values):
+        code += '\tcase {}: return {};\n'.format(base + i, v)
+    code += '\tdefault: return {};\n'.format(hole)
+    code += '\t}\n'
+    code += '}\n'
+    return code
+
+
+WRAP_TEMPLATE = string.Template(r'''namespace {
+namespace CxxLookup_$func_name {
+
+$code
+
+} // namespace CxxLookup_$func_name
+} // namespace
+
+uint32_t $func_name(uint32_t c) noexcept {
+    return CxxLookup_$func_name::lookup(c);
+}''')
+
+
+def wrap_code(func_name, code):
+    return WRAP_TEMPLATE.substitute(func_name=func_name, code=code)

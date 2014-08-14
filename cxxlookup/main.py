@@ -58,16 +58,8 @@ class CxxLookup:
         return self._code
 
     def _make_code(self):
-        # FIXME: The current version is unusable in practice.
-        code = 'uint32_t {func_name}(uint32_t c) noexcept {{\n'.format(
-               func_name=self._func_name)
-        code += '\tswitch (c) {\n'
-        for i, v in enumerate(self._values):
-            code += '\tcase {}: return {};\n'.format(self._base + i, v)
-        code += '\tdefault: return {};\n'.format(self._hole)
-        code += '\t}\n'
-        code += '}\n'
-        return code
+        code = codegen.make_code(self._base, self._values, self._hole)
+        return codegen.wrap_code(self._func_name, code)
 
     def test(self):
         run_test(self._func_name, self._base, self._values, self._hole,
