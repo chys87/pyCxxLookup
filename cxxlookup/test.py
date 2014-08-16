@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # coding: utf-8
-# vim: set ts=4 sts=4 sw=4 expandtab cc=80
+# vim: set ts=4 sts=4 sw=4 expandtab cc=80:
 
 # Copyright (c) 2014, chys <admin@CHYS.INFO>
 # All rights reserved.
