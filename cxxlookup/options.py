@@ -32,40 +32,32 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 
-from . import codegen
-from .codegen import COMMON_HEADERS
-from .options import OPT_DEFAULT
-from .test import run_test, TestError
-from . import utils
+class Options:
+    def __init__(self,
+                 linear_threshold,
+                 const_threshold,
+                 hole_threshold,
+                 split_threshold,
+                 group_threshold,
+                 max_expr_complexity):
+        self.linear_threshold = linear_threshold
+        self.const_threshold = const_threshold
+        self.hole_threshold = hole_threshold
+        self.split_threshold = split_threshold
+        self.group_threshold = group_threshold
+        self.max_expr_complexity = max_expr_complexity
 
 
-__all__ = ['TestError', 'COMMON_HEADERS', 'CxxLookup']
+# Prefere smaller code size
+OPT_Os = Options(64, 32, 24, 128, 3, 65536)
 
+# Prefer a balance
+OPT_O2 = Options(256, 96, 64, 512, 3, 32)
 
-class CxxLookup:
-    def __init__(self, func_name, base, values, hole=None,
-                 opt=OPT_DEFAULT):
-        self._func_name = func_name
-        self._base = base
-        self._values = values
-        self._array = utils.make_numpy_array(values)
-        if hole is None:
-            hole = int(utils.most_common_element(self._array))
-        self._hole = hole
-        self._opt = opt
+# Agressively optimize for performance
+OPT_O3 = Options(512, 192, 128, 1024, 3, 16)
 
-        self._code = None
+# Even more aggressive
+OPT_O4 = Options(1024, 384, 256, 2048, 3, 8)
 
-    def make_code(self):
-        if self._code is None:
-            self._code = self._make_code()
-        return self._code
-
-    def _make_code(self):
-        code = codegen.make_code(self._base, self._array, self._hole,
-                                 self._opt)
-        return codegen.wrap_code(self._func_name, code)
-
-    def test(self):
-        run_test(self._func_name, self._base, self._values, self._hole,
-                 COMMON_HEADERS, self.make_code())
+OPT_DEFAULT = OPT_O2

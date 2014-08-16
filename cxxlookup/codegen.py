@@ -35,6 +35,7 @@ import string
 
 import numpy as np
 
+from . import groupify
 from . import utils
 
 
@@ -42,16 +43,14 @@ COMMON_HEADERS = \
     "#include <stdint.h>\n"
 
 
-def make_numpy_array(values):
-    return np.array(values, dtype=np.uint32)
-
-
-def make_code(base, values, hole):
+def make_code(base, values, hole, opt):
+    groups = groupify.groupify(base, values, hole, opt)
     # FIXME: The current version is unusable in practice.
     code = 'inline uint32_t lookup(uint32_t c) noexcept {\n'
     code += '\tswitch (c) {\n'
-    for i, v in enumerate(values):
-        code += '\tcase {}: return {};\n'.format(base + i, v)
+    for lo, group_values in groups.items():
+        for i, v in enumerate(group_values):
+            code += '\tcase {}: return {};\n'.format(lo + i, v)
     code += '\tdefault: return {};\n'.format(hole)
     code += '\t}\n'
     code += '}\n'

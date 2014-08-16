@@ -35,7 +35,43 @@
 import numpy as np
 
 
+def make_numpy_array(values):
+    return np.array(values, dtype=np.uint32)
+
+
 def most_common_element(arr):
     """Return the most common element of a numpy array"""
     u, indices = np.unique(arr, return_inverse=True)
     return u[np.argmax(np.bincount(indices))]
+
+
+def is_const(array):
+    """Returns if the given array is constant"""
+    if array.size == 0:
+        return True
+    else:
+        return (array == array[0]).all()
+
+
+def is_linear(array):
+    """Returns if the given array is linear"""
+    return is_const(array[1:] - array[:-1])
+
+
+def const_range(array):
+    """Returns the max n, such that array[:n] is a constant array"""
+    if array.size == 0:
+        return 0
+    k = (array != array[0]).tostring().find(1)
+    if k < 0:
+        k = array.size
+    return k
+
+
+def range_limit(array, threshold):
+    '''
+    Return the max k, such that max(array[:k]) - min(array[:k]) < threshold
+    (array can be an iterator)
+    '''
+    ran = np.maximum.accumulate(array) - np.minimum.accumulate(array)
+    return int(ran.searchsorted(threshold))
