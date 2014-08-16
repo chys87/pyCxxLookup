@@ -35,6 +35,7 @@
 from . import codegen
 from .codegen import COMMON_HEADERS
 from .test import run_test, TestError
+from . import utils
 
 
 __all__ = ['TestError', 'COMMON_HEADERS', 'CxxLookup']
@@ -47,7 +48,7 @@ class CxxLookup:
         self._values = values
         self._array = codegen.make_numpy_array(values)
         if hole is None:
-            hole = int(codegen.most_common_element(self._array))
+            hole = int(utils.most_common_element(self._array))
         self._hole = hole
 
         self._code = None
