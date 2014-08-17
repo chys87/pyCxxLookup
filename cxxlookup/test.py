@@ -94,7 +94,7 @@ def _run_test(func_name, base, values, hole, headers, code,
                                    lo=base,
                                    hi=base + len(values))
 
-    with open(src_name, 'w') as f:
+    with open(os.path.join(cwd, src_name), 'w') as f:
         f.write(src)
 
     rc = subprocess.call(['g++', '-O2', '-std=gnu++11',
