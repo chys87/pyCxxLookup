@@ -31,6 +31,7 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
+import fractions
 
 import numpy as np
 
@@ -75,3 +76,65 @@ def range_limit(array, threshold):
     '''
     ran = np.maximum.accumulate(array) - np.minimum.accumulate(array)
     return int(ran.searchsorted(threshold))
+
+
+def trim_brackets(s):
+    front = 0
+    while front < len(s) and s[front] == '(':
+        front += 1
+    if not front:
+        return s
+
+    back = 0
+    while back < len(s) and s[-1 - back] == ')':
+        back += 1
+    if not back:
+        return s
+
+    trim_cnt = min(front, back)
+    s = s[trim_cnt:-trim_cnt]
+
+    n = 0
+    m = 0
+    for c in s:
+        if c == '(':
+            n += 1
+        elif c == ')':
+            n -= 1
+            m = min(m, n)
+    if m < 0:
+        s = '('*-m + s + ')'*-m
+    return s
+
+
+def stridize(array, n, default=0):
+    '''
+    => (array[0], array[n], array[2*n], ...), (array[1], arra[n+1], ...), ...
+    '''
+    l = array.size
+    if l % n == 0:
+        return np.reshape(array, [l // n, n]).T
+    else:
+        padsize = n - (l % n)
+        tmp = [array, np.zeros(padsize, dtype=array.dtype) + default]
+        tmp = np.concatenate(tmp)
+        return tmp.reshape([l // n + 1, n]).T
+
+
+def gcd_many(array, gcd=fractions.gcd):
+    if array.size == 0:
+        return 0
+    res = array[0]
+    for i in range(1, array.size):
+        if res == 1:
+            break
+        res = gcd(res, array[i])
+    return int(res)
+
+
+def gcd_reduce(array):
+    '''
+    Return the max gcd, such that is_const(v % gcd for v in array)
+    '''
+    array = np.unique(array)
+    return gcd_many(array[1:] - array[:-1])

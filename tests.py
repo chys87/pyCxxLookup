@@ -33,6 +33,7 @@
 
 import argparse
 import os
+import random
 import subprocess
 import sys
 import tempfile
@@ -79,6 +80,75 @@ def test_wcwidth(tester):
     tester('wcwidth', values)
 
 
+def test_misc1(tester):
+    # Linear
+    values = [x * 32 + 170 for x in range(1024)]
+    values.extend([0] * 1000)
+    values.extend(100000 - 5 * x for x in range(1000))
+
+    # 2 unique values: [a,a,a,a,a,a,b,b,b,b,b,b]
+    values.extend([42] * 50)
+    values.extend([54] * 54)
+
+    # 2 unique values: [a,a,a,a,a,a,b,b,b,b,b,b,a,a,a,a,a]
+    values.extend([0] * 1000)
+    values.extend([42] * 5)
+    values.extend([54] * 4)
+    values.extend([42] * 5)
+
+    # 2 unique values: bit test
+    values.extend([0] * 1000)
+    values.extend(random.choice((25, 54)) for _ in range(64))
+
+    # Pakced into one single 64-bit integer
+    values.extend([0] * 1000)
+    values.extend(random.randint(0, 255) for _ in range(8))
+
+    # Mostly linear, but with some outliers
+    # (This one should NOT be optimized with "mostly linear" method)
+    values.extend([0] * 1000)
+    tmp = [x * 32 for x in range(1024)]
+    for _ in range(32):
+        i = random.randrange(len(tmp))
+        tmp[i] = random.randint(0, 2**32 - 1)
+    values.extend(tmp)
+
+    # Mostly linear, but with some outliers
+    # (This one SHOULD be optimized with "mostly linear" method)
+    values.extend([0] * 1000)
+    tmp = [x * 2**20 for x in range(1024)]
+    for _ in range(32):
+        i = random.randrange(len(tmp))
+        tmp[i] += random.randint(0, 16383)
+    values.extend(tmp)
+
+    # Two level lookup.
+    values.extend([0] * 1000)
+    tmp = [random.randrange(2**32) for _ in range(100)]
+    values.extend(random.choice(tmp) for _ in range(1000))
+
+    # "Compression"
+    values.extend([0] * 1000)
+    values.extend(random.randrange(2) + 20 for _ in range(200))
+    values.extend([0] * 1000)
+    values.extend(random.randrange(4) + 20 for _ in range(200))
+    values.extend([0] * 1000)
+    values.extend(random.randrange(16) + 30 for _ in range(200))
+
+    # "GCD reduce"
+    values.extend([0] * 1000)
+    values.extend(random.randrange(256) * 2557 + 2554 for _ in range(300))
+
+    # Lo/Hi split
+    tmp_values = [random.randrange(65536) for _ in range(256)]
+    lo_values = [random.choice(tmp_values) for _ in range(1024)]
+    hi_values = [random.choice(tmp_values) for _ in range(1024)]
+    values.extend([0] * 1000)
+    values.extend(lo + hi * 65536 for (lo, hi) in zip(lo_values, hi_values))
+
+    tester('misc1', values)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-s', '--static',
@@ -94,8 +164,10 @@ def main():
     if args.static:
         static_check()
     if args.unit_tests:
+        random.seed(0)  # Use fixed seed to get repeatable results
         tester = Tester(args.tempdir)
         test_wcwidth(tester)
+        test_misc1(tester)
 
 
 if __name__ == '__main__':
