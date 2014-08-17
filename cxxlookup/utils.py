@@ -48,6 +48,14 @@ def most_common_element(arr):
     return u[np.argmax(np.bincount(indices))]
 
 
+def most_common_element_count(arr):
+    """Return the most common element of a numpy array and its count"""
+    u, indices = np.unique(arr, return_inverse=True)
+    bincnt = np.bincount(indices)
+    i = np.argmax(bincnt)
+    return u[i], bincnt[i]
+
+
 def is_const(array):
     """Returns if the given array is constant"""
     if array.size == 0:
@@ -69,6 +77,10 @@ def const_range(array):
     if k < 0:
         k = array.size
     return k
+
+
+def array_range(array):
+    return int(array.max() - array.min())
 
 
 def range_limit(array, threshold):
@@ -126,11 +138,11 @@ def stridize(array, n, default=0):
 def gcd_many(array, gcd=fractions.gcd):
     if array.size == 0:
         return 0
-    res = array[0]
+    res = int(array[0])
     for i in range(1, array.size):
         if res == 1:
             break
-        res = gcd(res, array[i])
+        res = gcd(res, int(array[i]))
     return int(res)
 
 

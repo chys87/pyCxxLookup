@@ -281,28 +281,32 @@ class MakeCodeForRange:
             # Usually it's faster to multiply by power of 2
             for BT in 4, 8, 16, 32:
                 # +1: Multiply by (1 + power of 2) isn't slow.
-                if (BT/2+1 < bits < BT) and (num * BT <= Bits):
+                if (BT//2 + 1 < bits < BT) and (num * BT <= Bits):
                     bits = BT
                     break
             mask = 0
             for k, v in enumerate(values):
-                mask |= (v + offset) << (k * bits)
+                mask |= (int(v) + offset) << (k * bits)
             expr = Mul(Add(inexpr, -lo), bits)
             expr = And(Cast(U32, RShift(Const(Bits, mask), expr)),
                        (1 << bits) - 1)
             return Add(expr, addition - offset)
 
         # Most elements are almost linear, but a few outliers exist.
-        slope = int(np.median(
+        slope, slope_count = map(int, utils.most_common_element_count(
             np.array(values[1:], np.int64) - np.array(values[:-1], np.int64)))
-        if slope:
+        if slope and slope_count >= num // 2:
             reduced_values = values - slope * (
                 lo + np.arange(num, dtype=np.int64))
             # Be careful to avoid infinite recursion
-            if np.unique(reduced_values).size <= uniq * 2 // 3:
+            reduced_uniqs = np.unique(reduced_values)
+            if reduced_uniqs.size <= uniq // 2 or \
+                    int(reduced_uniqs[-1] - reduced_uniqs[0]).bit_length() <= \
+                    maxv_bits // 2:
                 offset = int(reduced_values.min())
                 # Negative values may cause problems
                 reduced_values -= offset
+                reduced_values = np.array(reduced_values, np.uint32)
 
                 subexpr, subexpr_long = self._smart_subexpr(inexpr,
                                                             inexpr_long)
@@ -312,14 +316,14 @@ class MakeCodeForRange:
                                        subexpr, subexpr_long,
                                        addition=offset+addition)
 
-                if expr.complexity() < self._opt.max_expr_complexity and (\
+                if expr.complexity() < self._opt.max_expr_complexity and (
                         self._table_size(expr) <
                         num * TypeBytes[const_type(maxv)] - 16):
                     # inexpr * slope + expr
                     return Add(Mul(subexpr, slope), expr)
 
         # Two-level lookup?
-        if maxv > num > uniq * 1.2:  # Avoid infinite recursion
+        if maxv > num > uniq * 4 // 3:
             indices = np.searchsorted(uniqs, values)
             # Level 1
             expr = self._make_code(lo, indices, table_name + '_index',
@@ -328,7 +332,7 @@ class MakeCodeForRange:
             expr = self._make_code(0, uniqs, table_name + '_value', expr, expr,
                                    addition=addition)
 
-            if expr.complexity() < self._opt.max_expr_complexity and (\
+            if expr.complexity() < self._opt.max_expr_complexity and (
                     self._table_size(expr) <
                     num * TypeBytes[const_type(maxv)] - 16):
                 return expr
@@ -409,14 +413,28 @@ class MakeCodeForRange:
             lomask = (1 << k) - 1
             lo_values = values & lomask
             hi_values = values & ~lomask
-            if utils.is_const(lo_values) or utils.is_const(hi_values):
-                continue  # Avoid infinite recursion
+
+            lo_uniq = np.unique(lo_values).size
+            if lo_uniq < 2:
+                continue
+            hi_uniq = np.unique(hi_values).size
+            if hi_uniq < 2:
+                continue
 
             hi_gcd = utils.gcd_many(hi_values)
             hi_values //= hi_gcd
 
-            if min(np.unique(lo_values).size, np.unique(hi_values).size) <= \
-                    uniq // 2:
+            if k == 4:
+                # We must be very careful when k == 4
+                # If we just split it, two 4-bit values will be joined
+                # in the recursion, and then split again, resulting in almost
+                # uncontrollable recursions
+                if max(lo_uniq, hi_uniq) <= 4:
+                    pass
+                else:
+                    continue
+
+            elif min(lo_uniq, hi_uniq) <= min(1 << (k - 1), uniq // 2):
                 pass
 
             elif int(hi_values.max() - hi_values.min()).bit_length() <= k // 2:
