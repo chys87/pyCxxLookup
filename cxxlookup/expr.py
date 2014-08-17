@@ -174,8 +174,7 @@ class ExprAdd(Expr):
         else:
             return self._exprs
 
-    def optimize(self,flags=0,
-                 isinstance=isinstance):
+    def optimize(self, flags=0):
 
         if self._const:
             flags |= Expr.optimize_absorb_constant
@@ -247,7 +246,7 @@ class ExprLShift(ExprBinary):
             return ExprAnd(expr_left, expr_right).optimize()
 
         # "(a + c1) << c2" ==> (a << c2) + (c1 << c2)
-        elif isinstance(left, ExprAdd) and len(left._exprs)==1 and \
+        elif isinstance(left, ExprAdd) and len(left._exprs) == 1 and \
                 left._const and isinstance(right, ExprConst):
             expr_left = ExprLShift(left._exprs[0], right)
             expr_right = ExprConst(left._const._type,
@@ -372,11 +371,12 @@ class ExprAnd(ExprBinary):
         # (a + c1) & c2 ==> (a + c1') & c2
         # where c1' = c1 with high bits cleared
         if isinstance(left, ExprAdd) and left._const and \
-                isinstance(right,ExprConst) and right._value != 0:
+                isinstance(right, ExprConst) and right._value != 0:
             rv = right._value
             bt = rv.bit_length() + 1
             c1p = left._const._value & ((1 << bt) - 1)
-            if c1p & (1 << (bt - 1)): # If its high bit is set, make it negative
+            # If its high bit is set, make it negative
+            if c1p & (1 << (bt - 1)):
                 c1p |= ~((1 << bt) - 1)
             left = ExprAdd(left._exprs, ExprConst(left._const._type, c1p))
             self._left = left = left.optimize()
@@ -469,7 +469,8 @@ class ExprTable(Expr):
         elif self._offset < 0:
             # Don't add 'l' in this case, to avoid signed/unsigned
             # extension problems
-            return '{}[{} + {:#x}]'.format(self._name, self._var, -self._offset)
+            return '{}[{} + {:#x}]'.format(self._name,
+                                           self._var, -self._offset)
         else:
             var = utils.trim_brackets(str(self._var))
             return '{}[{}]'.format(self._name, var)
@@ -481,7 +482,7 @@ class ExprTable(Expr):
         indlen = len(hex(self._values.size))
         maxlen = len(hex(self._values.max()))
         for i, v in enumerate(self._values):
-            if (i % 8)==0:
+            if (i % 8) == 0:
                 res = res.rstrip() + '\n\t/* {:#0{}x} */ '.format(i, indlen)
             res += '{:#0{}x}, '.format(v, maxlen)
         res = res.rstrip(', ')
@@ -525,8 +526,7 @@ def Const(type, value):
     return ExprConst(type, value)
 
 
-def Add(*in_exprs
-        ,exprize=exprize, isinstance=isinstance, max=max, ExprConst=ExprConst):
+def Add(*in_exprs):
     exprs = []
     const_exprs = []
 

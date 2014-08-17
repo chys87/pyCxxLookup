@@ -72,7 +72,6 @@ class Tester:
         else:
             self._profiler = None
 
-
     def __call__(self, name, values, base=0, hole=None):
         print('Running test', name)
         cxx_name = os.path.join(self._tempdir, name + '.cpp')

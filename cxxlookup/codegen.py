@@ -148,8 +148,8 @@ class MakeCodeForRange:
         if self._expr:
             return
         expr = self._make_code(
-                self._lo, self._values, self._table_name,
-                Var('c'), Var('cl'))
+            self._lo, self._values, self._table_name,
+            Var('c'), Var('cl'))
         expr = expr.optimize()
 
         # Final optimization: Remove unnecessary explicit cast
@@ -222,7 +222,6 @@ class MakeCodeForRange:
             # (c - lo) * slope + addition
             return Add(Mul(Add(inexpr, -lo), slope), int(values[0]) + addition)
 
-
         # Not linear, but only two distinct values.
         if uniq == 2:
             k = utils.const_range(values)
@@ -241,7 +240,7 @@ class MakeCodeForRange:
                                 values[0] + addition,
                                 values[-1] + addition)
 
-            elif values[0] == values[-1] and utils.is_const(values[k:num - rk]):
+            elif values[0] == values[-1] and utils.is_const(values[k:num-rk]):
                 # [a, ..., a, b, ..., b, a, ..., a]
                 bcount = num - rk - k
                 if bcount == 1:
@@ -254,13 +253,14 @@ class MakeCodeForRange:
             elif num <= 64:
                 # Use bit test.
                 mask = 0
-                value0,value1 = uniqs
+                value0, value1 = uniqs
                 for k in range(num):
                     if values[k] == value1:
                         mask |= 1 << k
 
                 Bits = U64 if num > 32 else U32
-                expr = And(RShift(Const(Bits, mask), Add(inexpr, -lo)), Const(U32, 1))
+                expr = And(RShift(Const(Bits, mask), Add(inexpr, -lo)),
+                           Const(U32, 1))
                 if (value1 + addition != 1) or (value0 + addition != 0):
                     expr = Cond(expr, value1 + addition, value0 + addition)
                 elif Bits > U32:
@@ -287,7 +287,8 @@ class MakeCodeForRange:
             for k, v in enumerate(values):
                 mask |= (v + offset) << (k * bits)
             expr = Mul(Add(inexpr, -lo), bits)
-            expr = And(Cast(U32, RShift(Const(Bits, mask), expr)), (1 << bits) - 1)
+            expr = And(Cast(U32, RShift(Const(Bits, mask), expr)),
+                       (1 << bits) - 1)
             return Add(expr, addition - offset)
 
         # Most elements are almost linear, but a few outliers exist.
@@ -334,7 +335,8 @@ class MakeCodeForRange:
             if (addition > 0) and (addition + maxv < 16):
                 offset = addition
             lo_chunk, hi_chunk = utils.stridize(values, 2, -offset)
-            compressed_values = (lo_chunk + offset) | ((hi_chunk + offset) << 4)
+            compressed_values = (lo_chunk + offset) | \
+                ((hi_chunk + offset) << 4)
 
             subexpr, _ = self._smart_subexpr(inexpr, inexpr_long)
 
@@ -343,7 +345,7 @@ class MakeCodeForRange:
             expr_left = self._make_code(0, compressed_values,
                                         table_name + '_4bits',
                                         RShift(expr, 1), RShift(expr, 1))
-            expr_right = LShift(And(expr,1),2)
+            expr_right = LShift(And(expr, 1), 2)
             expr = And(RShift(expr_left, expr_right), 15)
             expr = Add(expr, addition - offset)
             return expr
@@ -351,7 +353,8 @@ class MakeCodeForRange:
         # Try using "compressed" table. 4->1
         if maxv_bits == 2 and num > 32:
             chunk_a, chunk_b, chunk_c, chunk_d = utils.stridize(values, 4, 0)
-            compressed_values = chunk_a | (chunk_b << 2) | (chunk_c << 4) | (chunk_d << 6)
+            compressed_values = chunk_a | (chunk_b << 2) | \
+                (chunk_c << 4) | (chunk_d << 6)
 
             subexpr, _ = self._smart_subexpr(inexpr, inexpr_long)
 
@@ -360,7 +363,7 @@ class MakeCodeForRange:
             expr_left = self._make_code(0, compressed_values,
                                         table_name + '_2bits',
                                         RShift(expr, 2), RShift(expr, 2))
-            expr_right = LShift(And(expr,3),1)
+            expr_right = LShift(And(expr, 3), 1)
             expr = And(RShift(expr_left, expr_right), 3)
             expr = Add(expr, addition)
             return expr
@@ -368,7 +371,7 @@ class MakeCodeForRange:
         # Try using "bitvector". 8->1
         if (maxv == 1) and num > 64:
             chunks_v = utils.stridize(values, 8, 0)
-            compressed_values = sum(v<<i for (i,v) in enumerate(chunks_v))
+            compressed_values = sum(v << i for (i, v) in enumerate(chunks_v))
 
             subexpr, _ = self._smart_subexpr(inexpr, inexpr_long)
 
@@ -421,11 +424,11 @@ class MakeCodeForRange:
             subexpr, subexpr_long = self._smart_subexpr(inexpr, inexpr_long)
 
             lo_expr = self._make_code(
-                    lo, lo_values, '{}_{}lo'.format(table_name,k),
-                    subexpr, subexpr_long, addition=addition)
+                lo, lo_values, '{}_{}lo'.format(table_name, k),
+                subexpr, subexpr_long, addition=addition)
             hi_expr = self._make_code(
-                    lo, hi_values, '{}_{}hi'.format(table_name,k),
-                    subexpr, subexpr_long)
+                lo, hi_values, '{}_{}hi'.format(table_name, k),
+                subexpr, subexpr_long)
             table_size = self._table_size(lo_expr) + self._table_size(hi_expr)
             if table_size < num * TypeBytes[const_type(maxv)] - 16:
                 return Add(lo_expr, Mul(hi_expr, hi_gcd))
