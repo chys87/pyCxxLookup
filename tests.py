@@ -53,24 +53,51 @@ def static_check():
 
 
 class Tester:
-    def __init__(self, tempdir):
-        self._tempdir = tempdir or os.path.join(
+    def __init__(self, args):
+        self._tempdir = args.tempdir or os.path.join(
             tempfile.gettempdir(), 'pyCxxLookupTest.{}'.format(os.getlogin()))
         try:
             os.mkdir(self._tempdir)
         except FileExistsError:
             pass
 
+        if args.profiling:
+            try:
+                import cProfile as profile
+            except ImportError:
+                import profile
+
+            self._profiler = profile.Profile()
+
+        else:
+            self._profiler = None
+
+
     def __call__(self, name, values, base=0, hole=None):
         print('Running test', name)
         cxx_name = os.path.join(self._tempdir, name + '.cpp')
         cl = CxxLookup('test_func', base, values, hole)
+
+        pr = self._profiler
+        if pr:
+            pr.enable()
 
         try:
             cl.test(cxx_name=cxx_name)
 
         except TestError as e:
             print('Failed:', e, file=sys.stderr)
+
+        finally:
+            if pr:
+                pr.disable()
+                import pstats
+                ps = pstats.Stats(pr, stream=sys.stderr)
+                ps.sort_stats('cumulative', 'stdname')
+                ps.print_stats(20)
+
+                ps.sort_stats('tottime', 'stdname')
+                ps.print_stats(20)
 
 
 def test_wcwidth(tester):
@@ -159,13 +186,17 @@ def main():
                         dest='unit_tests', action='store_false', default=True)
     parser.add_argument('--tempdir',
                         help='Specify temp dir to keep the files')
+    parser.add_argument('-p', '--profiling', default=False,
+                        action='store_true',
+                        help='Run Python profiler')
     args = parser.parse_args()
 
     if args.static:
         static_check()
     if args.unit_tests:
         random.seed(0)  # Use fixed seed to get repeatable results
-        tester = Tester(args.tempdir)
+
+        tester = Tester(args)
         test_wcwidth(tester)
         test_misc1(tester)
 
