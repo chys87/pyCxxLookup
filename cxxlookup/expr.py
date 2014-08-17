@@ -101,11 +101,19 @@ class Expr:
 
     optimize_absorb_constant = 1
 
-    def walk(self, type_or_type_tuple=None):
-        if not type_or_type_tuple or isinstance(self, type_or_type_tuple):
-            yield self
-        for expr in self.children():
-            yield from expr.walk(type_or_type_tuple)
+    def walk(self, type_or_type_tuple=None,
+             len=len, isinstance=isinstance):
+        res = []
+        stk = [self]
+        stk_pop = stk.pop
+        stk_extend = stk.extend
+        res_append = res.append
+        while stk:
+            expr = stk_pop()
+            if not type_or_type_tuple or isinstance(expr, type_or_type_tuple):
+                res_append(expr)
+            stk_extend(expr.children())
+        return res
 
 
 class ExprVar(Expr):
