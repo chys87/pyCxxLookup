@@ -39,7 +39,7 @@ from .test import run_test, TestError
 from . import utils
 
 
-__all__ = ['TestError', 'COMMON_HEADERS', 'CxxLookup']
+__all__ = ['TestError', 'COMMON_HEADERS', 'CxxLookup', 'make']
 
 
 class CxxLookup:
@@ -71,3 +71,9 @@ class CxxLookup:
         run_test(self._func_name, self._base, self._values, self._hole,
                  COMMON_HEADERS, self.make_code(),
                  cxx_name=cxx_name)
+
+
+def make(func_name, base, values, hole=None, opt=OPT_DEFAULT):
+    obj = CxxLookup(func_name, base, values, hole, opt)
+    obj.test()
+    return obj.make_code()
