@@ -32,8 +32,6 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 
-import numpy as np
-
 from . import utils
 
 

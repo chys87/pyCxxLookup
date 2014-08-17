@@ -53,12 +53,12 @@ class Options:
 OPT_Os = Options(64, 32, 24, 128, 3, 65536)
 
 # Prefer a balance
-OPT_O2 = Options(256, 96, 64, 512, 3, 32)
+OPT_O2 = Options(256, 96, 64, 512, 3, 256)
 
 # Agressively optimize for performance
-OPT_O3 = Options(512, 192, 128, 1024, 3, 16)
+OPT_O3 = Options(512, 192, 128, 1024, 3, 64)
 
 # Even more aggressive
-OPT_O4 = Options(1024, 384, 256, 2048, 3, 8)
+OPT_O4 = Options(1024, 384, 256, 2048, 3, 32)
 
 OPT_DEFAULT = OPT_O2

@@ -231,7 +231,12 @@ class ExprBinary(Expr):
         return max(I32, self._left.rettype(), self._right.rettype())
 
 
-class ExprLShift(ExprBinary):
+class ExprShift(ExprBinary):
+    def rettype(self):
+        return max(I32, self._left.rettype())
+
+
+class ExprLShift(ExprShift):
     def __str__(self):
         # Avoid the spurious 'u' after the constant
         right = self._right
@@ -246,6 +251,9 @@ class ExprLShift(ExprBinary):
         left = self._left
         right = self._right
 
+        if isinstance(left, ExprConst) and isinstance(right, ExprConst):
+            return ExprConst(self.rettype(), left._value << right._value)
+
         # "(a & c1) << c2" ==> (a << c2) & (c1 << c2) (where c2 <= 3)
         # This takes advantage of x86's LEA instruction
         if isinstance(left, ExprAnd) and \
@@ -256,19 +264,41 @@ class ExprLShift(ExprBinary):
                                    left._right._value << right._value)
             return ExprAnd(expr_left, expr_right).optimize()
 
+        # (cond ? c1 : c2) << c3 ==> (cond ? c1 << c3 : c2 << c3)
+        if isinstance(left, ExprCond) and \
+                isinstance(left._exprT, ExprConst) and \
+                isinstance(left._exprF, ExprConst) and \
+                isinstance(right, ExprConst):
+            expr = ExprCond(left._cond,
+                            ExprLShift(left._exprT, right),
+                            ExprLShift(left._exprF, right))
+            return expr.optimize()
+
+        # (a >> c1) << c2  (c2 > c1)
+        # (a << (c2 - c1)) & ~((1 << c2) - 1)
+        if isinstance(left, ExprRShift) and \
+                isinstance(left._right, ExprConst) and \
+                isinstance(right, ExprConst) and \
+                right._value > left._right._value:
+            c2 = right._value
+            c1 = left._right._value
+            expr = ExprLShift(left._left, ExprConst(U32, c2 - c1))
+            and_value = ((1 << c2) - 1) ^ ((1 << expr.rettype()) - 1)
+            expr = ExprAnd(expr, Const(expr.rettype(), and_value))
+            return expr.optimize()
+
         # "(a + c1) << c2" ==> (a << c2) + (c1 << c2)
-        elif isinstance(left, ExprAdd) and len(left._exprs) == 1 and \
+        if isinstance(left, ExprAdd) and len(left._exprs) == 1 and \
                 left._const and isinstance(right, ExprConst):
             expr_left = ExprLShift(left._exprs[0], right)
             expr_right = ExprConst(left._const._type,
                                    left._const._value << right._value)
             return ExprAdd((expr_left,), expr_right).optimize()
 
-        else:
-            return self
+        return self
 
 
-class ExprRShift(ExprBinary):
+class ExprRShift(ExprShift):
     def __str__(self):
         # Always logical shift
         left_type = self._left.rettype()
@@ -355,6 +385,16 @@ class ExprMul(ExprBinary):
             expr_right = ExprMul(left._const, right)
             return ExprAdd((expr_left, expr_right), None).optimize()
 
+        # (cond ? c1 : c2) * c3 ==> (cond ? c1 * c3 : c2 * c3)
+        if isinstance(left, ExprCond) and \
+                isinstance(left._exprT, ExprConst) and \
+                isinstance(left._exprF, ExprConst) and \
+                isinstance(right, ExprConst):
+            expr = ExprCond(left._cond,
+                            Mul(left._exprT, right),
+                            Mul(left._exprF, right))
+            return expr.optimize()
+
         # Strength reduction (* => <<)
         if isinstance(right, ExprConst):
             rv = right._value
@@ -391,6 +431,16 @@ class ExprAnd(ExprBinary):
                 c1p |= ~((1 << bt) - 1)
             left = ExprAdd(left._exprs, ExprConst(left._const._type, c1p))
             self._left = left = left.optimize()
+
+        # (a & c1) & c2 ==> a & (c1 & c2)
+        if isinstance(left, ExprAnd) and \
+                isinstance(left._right, ExprConst) and \
+                isinstance(right, ExprConst):
+            c1 = left._right._value
+            c2 = right._value
+            expr = ExprAnd(left._left,
+                           Const(max(left._right._type, right._type), c1 & c2))
+            return expr.optimize()
 
         # (a & 0xff) ==> (uint8_t)a
         # (a & 0xffff) ==> (uint16_t)a
@@ -460,8 +510,8 @@ class ExprCond(Expr):
 
     def optimize(self, flags=0):
         self._cond = self._cond.optimize()
-        self._exprT.cond = self._exprT.optimize()
-        self._exprF.cond = self._exprF.optimize()
+        self._exprT = self._exprT.optimize()
+        self._exprF = self._exprF.optimize()
         return self
 
 
