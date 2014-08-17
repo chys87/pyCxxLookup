@@ -41,8 +41,7 @@ class TestError(Exception):
     pass
 
 
-CODE_TEMPLATE = Template(r'''\
-$headers
+CODE_TEMPLATE = Template(r'''$headers
 #include <stdio.h>
 
 $code
