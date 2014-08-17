@@ -115,6 +115,9 @@ class Expr:
             stk_extend(expr.children())
         return res
 
+    def complexity(self):
+        return len(self.walk())
+
 
 class ExprVar(Expr):
     def __init__(self, name):

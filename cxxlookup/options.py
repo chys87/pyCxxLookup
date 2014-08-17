@@ -45,6 +45,7 @@ class Options:
         self.hole_threshold = hole_threshold
         self.split_threshold = split_threshold
         self.group_threshold = group_threshold
+        # max_expr_complexity is not a hard limit, but a hint
         self.max_expr_complexity = max_expr_complexity
 
 
