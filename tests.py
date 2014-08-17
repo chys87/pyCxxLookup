@@ -32,8 +32,10 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 import argparse
+import os
 import subprocess
 import sys
+import tempfile
 
 from cxxlookup import CxxLookup, TestError
 
@@ -49,22 +51,32 @@ def static_check():
         sys.exit(1)
 
 
-def run_test(name, values, base=0, hole=None):
-    print('Running test', name)
-    cl = CxxLookup('test_func', base, values, hole)
+class Tester:
+    def __init__(self, tempdir):
+        self._tempdir = tempdir or os.path.join(
+            tempfile.gettempdir(), 'pyCxxLookupTest.{}'.format(os.getlogin()))
+        try:
+            os.mkdir(self._tempdir)
+        except FileExistsError:
+            pass
 
-    try:
-        cl.test()
+    def __call__(self, name, values, base=0, hole=None):
+        print('Running test', name)
+        cxx_name = os.path.join(self._tempdir, name + '.cpp')
+        cl = CxxLookup('test_func', base, values, hole)
 
-    except TestError as e:
-        print('Failed:', e, file=sys.stderr)
+        try:
+            cl.test(cxx_name=cxx_name)
+
+        except TestError as e:
+            print('Failed:', e, file=sys.stderr)
 
 
-def test_wcwidth():
+def test_wcwidth(tester):
     import unicodedata
     values = [int(unicodedata.east_asian_width(chr(c)) in 'WF') for c
               in range(0x10000)]
-    run_test('wcwidth', values)
+    tester('wcwidth', values)
 
 
 def main():
@@ -75,12 +87,15 @@ def main():
     parser.add_argument('--no-unit-tests',
                         help='Don\'t run unit tests.',
                         dest='unit_tests', action='store_false', default=True)
+    parser.add_argument('--tempdir',
+                        help='Specify temp dir to keep the files')
     args = parser.parse_args()
 
     if args.static:
         static_check()
     if args.unit_tests:
-        test_wcwidth()
+        tester = Tester(args.tempdir)
+        test_wcwidth(tester)
 
 
 if __name__ == '__main__':

@@ -34,7 +34,7 @@
 import os
 from string import Template
 import subprocess
-from tempfile import TemporaryDirectory
+import tempfile
 
 
 class TestError(Exception):
@@ -56,10 +56,10 @@ int main(void) {
 ''')
 
 
-def check_result(exe_name, dirname, base, values):
+def check_result(exe_name, cwd, base, values):
     test_proc = subprocess.Popen([os.path.join('.', exe_name)],
                                  stdout=subprocess.PIPE,
-                                 cwd=dirname)
+                                 cwd=cwd)
     test_output = test_proc.stdout.read()
     rc = test_proc.wait()
     if rc != 0:
@@ -86,26 +86,41 @@ def check_result(exe_name, dirname, base, values):
                                                                got_values[k]))
 
 
-def run_test(func_name, base, values, hole, headers, code):
-    src_name = 'test.cpp'
-    exe_name = 'test.exe'
+def _run_test(func_name, base, values, hole, headers, code,
+              cwd, src_name, exe_name):
 
-    with TemporaryDirectory(prefix='pyCxxLookup') as dirname:
+    src = CODE_TEMPLATE.substitute(headers=headers,
+                                   code=code,
+                                   func_name=func_name,
+                                   lo=base,
+                                   hi=base + len(values))
 
-        src = CODE_TEMPLATE.substitute(headers=headers,
-                                       code=code,
-                                       func_name=func_name,
-                                       lo=base,
-                                       hi=base + len(values))
+    with open(src_name, 'w') as f:
+        f.write(src)
 
-        src_path = os.path.join(dirname, src_name)
-        with open(src_path, 'w') as f:
-            f.write(src)
+    rc = subprocess.call(['g++', '-O2', '-std=gnu++11',
+                          '-o', exe_name, src_name],
+                         cwd=cwd)
+    if rc != 0:
+        raise TestError("Compilation failed")
 
-        rc = subprocess.call(['g++', '-O2', '-std=gnu++11',
-                              '-o', exe_name, src_name],
-                             cwd=dirname)
-        if rc != 0:
-            raise TestError("Compilation failed")
+    check_result(exe_name, cwd, base, values)
 
-        check_result(exe_name, dirname, base, values)
+
+def run_test(func_name, base, values, hole, headers, code, cxx_name=None):
+    if cxx_name:
+        tmpdir = tempfile.gettempdir()
+        exe_name = os.path.join(
+            tmpdir, 'pyCxxLookup-test.{}.exe'.format(os.getlogin()))
+        try:
+            _run_test(func_name, base, values, hole, headers, code,
+                      tmpdir, cxx_name, exe_name)
+        finally:
+            try:
+                os.unlink(exe_name)
+            except FileNotFoundError:
+                pass
+    else:
+        with tempfile.TemporaryDirectory(prefix='pyCxxLookup') as dirname:
+            _run_test(func_name, base, values, hole, headers, code,
+                      dirname, 'test.cpp', 'test.exe')

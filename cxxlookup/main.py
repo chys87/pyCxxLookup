@@ -66,6 +66,7 @@ class CxxLookup:
                                  self._opt)
         return codegen.wrap_code(self._func_name, code)
 
-    def test(self):
+    def test(self, cxx_name=None):
         run_test(self._func_name, self._base, self._values, self._hole,
-                 COMMON_HEADERS, self.make_code())
+                 COMMON_HEADERS, self.make_code(),
+                 cxx_name=cxx_name)
