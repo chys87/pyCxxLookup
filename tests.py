@@ -31,9 +31,23 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
+import argparse
+import subprocess
 import sys
 
 from cxxlookup import CxxLookup, TestError
+
+
+def static_check():
+    # Pyflakes
+    rc_pyflakes = subprocess.call(['pyflakes', '.'])
+
+    # PEP-8 check
+    rc_pep8 = subprocess.call(['pep8', '.'])
+
+    if rc_pyflakes != 0 or rc_pep8 != 0:
+        sys.exit(1)
+
 
 def run_test(name, values, base=0, hole=None):
     print('Running test', name)
@@ -54,7 +68,19 @@ def test_wcwidth():
 
 
 def main():
-    test_wcwidth()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-s', '--static',
+                        help='Enable static analysis.',
+                        action='store_true', default=False)
+    parser.add_argument('--no-unit-tests',
+                        help='Don\'t run unit tests.',
+                        dest='unit_tests', action='store_false', default=True)
+    args = parser.parse_args()
+
+    if args.static:
+        static_check()
+    if args.unit_tests:
+        test_wcwidth()
 
 
 if __name__ == '__main__':
