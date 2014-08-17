@@ -61,42 +61,16 @@ class Tester:
         except FileExistsError:
             pass
 
-        if args.profiling:
-            try:
-                import cProfile as profile
-            except ImportError:
-                import profile
-
-            self._profiler = profile.Profile()
-
-        else:
-            self._profiler = None
-
     def __call__(self, name, values, base=0, hole=None):
         print('Running test', name)
         cxx_name = os.path.join(self._tempdir, name + '.cpp')
         cl = CxxLookup('test_func', base, values, hole)
-
-        pr = self._profiler
-        if pr:
-            pr.enable()
 
         try:
             cl.test(cxx_name=cxx_name)
 
         except TestError as e:
             print('Failed:', e, file=sys.stderr)
-
-        finally:
-            if pr:
-                pr.disable()
-                import pstats
-                ps = pstats.Stats(pr, stream=sys.stderr)
-                ps.sort_stats('cumulative', 'stdname')
-                ps.print_stats(20)
-
-                ps.sort_stats('tottime', 'stdname')
-                ps.print_stats(20)
 
 
 def test_wcwidth(tester):
@@ -189,6 +163,11 @@ def main():
                         action='store_true',
                         help='Run Python profiler')
     args = parser.parse_args()
+
+    if args.profiling:
+        os.environ['pyCxxLookup_Profiling'] = '1'
+    else:
+        os.environ.pop('pyCxxLookup_Profiling', None)
 
     if args.static:
         static_check()

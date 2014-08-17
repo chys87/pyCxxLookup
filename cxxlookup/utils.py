@@ -32,6 +32,8 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 import fractions
+import os
+import sys
 
 import numpy as np
 
@@ -138,3 +140,33 @@ def gcd_reduce(array):
     '''
     array = np.unique(array)
     return gcd_many(array[1:] - array[:-1])
+
+
+def profiling(func):
+
+    def _func(*args, **kwargs):
+        # We hope it can be set or unset at run-time, so put the check here
+        if not os.environ.get('pyCxxLookup_Profiling'):
+            return func(*args, **kwargs)
+
+        try:
+            import cProfile as profile
+        except ImportError:
+            import profile
+        import pstats
+
+        pr = profile.Profile()
+        pr.enable()
+        try:
+            return func(*args, **kwargs)
+
+        finally:
+            pr.disable()
+            ps = pstats.Stats(pr, stream=sys.stderr)
+            ps.sort_stats('cumulative', 'stdname')
+            ps.print_stats(20)
+
+            ps.sort_stats('tottime', 'stdname')
+            ps.print_stats(20)
+
+    return _func

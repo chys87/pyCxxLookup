@@ -61,6 +61,7 @@ class CxxLookup:
             self._code = self._make_code()
         return self._code
 
+    @utils.profiling
     def _make_code(self):
         code = codegen.make_code(self._base, self._array, self._hole,
                                  self._opt)
