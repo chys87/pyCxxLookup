@@ -278,15 +278,20 @@ class ExprLShift(ExprShift):
                             ExprLShift(left._exprF, right))
             return expr.optimize()
 
-        # (a >> c1) << c2  (c2 > c1)
-        # (a << (c2 - c1)) & ~((1 << c2) - 1)
+        # (a >> c1) << c2
+        # (a << (c2 - c1)) & ~((1 << c2) - 1)   (c2 > c1)
+        # (a >> (c1 - c2)) & ~((1 << c2) - 1)   (c2 <= c1)
         if isinstance(left, ExprRShift) and \
                 isinstance(left._right, ExprConst) and \
-                isinstance(right, ExprConst) and \
-                right._value > left._right._value:
+                isinstance(right, ExprConst):
             c2 = right._value
             c1 = left._right._value
-            expr = ExprLShift(left._left, ExprConst(U32, c2 - c1))
+            if c2 > c1:
+                expr = ExprLShift(left._left, ExprConst(U32, c2 - c1))
+            elif c2 == c1:
+                expr = left._left
+            else:
+                expr = ExprRShift(left._left, ExprConst(U32, c1 - c2))
             and_value = ((1 << c2) - 1) ^ ((1 << expr.rettype()) - 1)
             expr = ExprAnd(expr, Const(expr.rettype(), and_value))
             return expr.optimize()
