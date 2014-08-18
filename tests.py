@@ -88,10 +88,9 @@ class Tester:
             opt = cxxlookup.OPT_DEFAULT
 
         cxx_name = os.path.join(self._tempdir, name + '.cpp')
-        bak_name = None
+        bak_name = cxx_name + '.bak'
 
         if os.path.exists(cxx_name):
-            bak_name = cxx_name + '.bak'
             try:
                 os.unlink(bak_name)
             except FileNotFoundError:
@@ -107,7 +106,7 @@ class Tester:
             print('Failed:', e, file=sys.stderr)
             return
 
-        if self._diff and bak_name:
+        if self._diff and os.path.exists(bak_name):
             subprocess.call(['diff', '-u', bak_name, cxx_name])
 
 
