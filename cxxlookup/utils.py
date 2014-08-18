@@ -31,7 +31,6 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-import fractions
 import os
 import sys
 
@@ -135,15 +134,23 @@ def stridize(array, n, default=0):
         return tmp.reshape([l // n + 1, n]).T
 
 
-def gcd_many(array, gcd=fractions.gcd):
-    if array.size == 0:
-        return 0
-    res = int(array[0])
-    for i in range(1, array.size):
-        if res == 1:
-            break
-        res = gcd(res, int(array[i]))
-    return int(res)
+def gcd_many(array, int=int):
+    res = 0
+    for v in array:
+        v = int(v)
+        if not v:
+            continue
+        if res < 2:
+            if not res:
+                res = v
+                continue
+            else:
+                break
+        # We could have used fractions.gcd, but here we do it ourselves for
+        # better performance (fractions.gcd has no C implementation)
+        while v:
+            res, v = v, res % v
+    return res
 
 
 def gcd_reduce(array):
