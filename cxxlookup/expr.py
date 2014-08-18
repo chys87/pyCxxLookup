@@ -541,18 +541,20 @@ class ExprTable(Expr):
             return '{}[{}]'.format(self._name, var)
 
     def statics(self):
-        res = self._var.statics()
-        res += 'const {} {}[{:#x}] = {{'.format(
-            TypeNames[self._type], self._name, self._values.size)
+        res = [self._var.statics()]
+
         indlen = len(hex(self._values.size))
         maxlen = len(hex(self._values.max()))
+        line = 'const {} {}[{:#x}] = {{'.format(
+            TypeNames[self._type], self._name, self._values.size)
         for i, v in enumerate(self._values):
             if (i % 8) == 0:
-                res = res.rstrip() + '\n\t/* {:#0{}x} */ '.format(i, indlen)
-            res += '{:#0{}x}, '.format(v, maxlen)
-        res = res.rstrip(', ')
-        res += '\n};\n\n'
-        return res
+                res.append(line.rstrip() + '\n')
+                line = '\t/* {:#0{}x} */ '.format(i, indlen)
+            line += '{:#0{}x}, '.format(v, maxlen)
+        res.append(line.rstrip(', ') + '\n')
+        res.append('};\n\n')
+        return ''.join(res)
 
     def rettype(self):
         return self._type
