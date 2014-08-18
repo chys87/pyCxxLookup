@@ -208,6 +208,10 @@ class ExprAdd(Expr):
 
         self._exprs = tuple(exprs)
         self._const = ExprConst.combine(const_exprs)
+
+        if len(self._exprs) == 1 and not self._const:
+            return self._exprs[0]
+
         return self
 
 
