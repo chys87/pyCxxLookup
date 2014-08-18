@@ -61,9 +61,21 @@ class Tester:
         except FileExistsError:
             pass
 
+        self._diff = args.diff
+
     def __call__(self, name, values, base=0, hole=None):
         print('Running test', name)
         cxx_name = os.path.join(self._tempdir, name + '.cpp')
+        bak_name = None
+
+        if os.path.exists(cxx_name):
+            bak_name = cxx_name + '.bak'
+            try:
+                os.unlink(bak_name)
+            except FileNotFoundError:
+                pass
+            os.rename(cxx_name, bak_name)
+
         cl = CxxLookup('test_func', base, values, hole)
 
         try:
@@ -71,6 +83,10 @@ class Tester:
 
         except TestError as e:
             print('Failed:', e, file=sys.stderr)
+            return
+
+        if self._diff and bak_name:
+            subprocess.call(['diff', '-u', bak_name, cxx_name])
 
 
 def test_wcwidth(tester):
@@ -157,6 +173,9 @@ def main():
     parser.add_argument('--no-unit-tests',
                         help='Don\'t run unit tests.',
                         dest='unit_tests', action='store_false', default=True)
+    parser.add_argument('-d', '--diff',
+                        help='Show diff from last version if possible.',
+                        default=False, action='store_true')
     parser.add_argument('--tempdir',
                         help='Specify temp dir to keep the files')
     parser.add_argument('-p', '--profiling', default=False,
