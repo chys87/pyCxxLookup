@@ -38,7 +38,7 @@ import subprocess
 import sys
 import tempfile
 
-from cxxlookup import CxxLookup, TestError
+import cxxlookup
 
 
 def static_check():
@@ -63,8 +63,22 @@ class Tester:
 
         self._diff = args.diff
 
-    def __call__(self, name, values, base=0, hole=None):
-        print('Running test', name)
+    def run(self, name, test_func):
+        print('Preparing test', name, '...')
+
+        res = test_func()
+        base = 0
+        hole = None
+        opt = cxxlookup.OPT_DEFAULT
+        if isinstance(res, dict):
+            values = res['values']
+            base = res.get('base', base)
+            hole = res.get('hole', hole)
+            opt = res.get('opt', opt)
+
+        else:
+            values = res
+
         cxx_name = os.path.join(self._tempdir, name + '.cpp')
         bak_name = None
 
@@ -76,12 +90,14 @@ class Tester:
                 pass
             os.rename(cxx_name, bak_name)
 
-        cl = CxxLookup('test_func', base, values, hole)
+        print('Running test', name, '...')
+
+        cl = cxxlookup.CxxLookup('test_func', base, values, hole=hole, opt=opt)
 
         try:
             cl.test(cxx_name=cxx_name)
 
-        except TestError as e:
+        except cxxlookup.TestError as e:
             print('Failed:', e, file=sys.stderr)
             return
 
@@ -89,14 +105,28 @@ class Tester:
             subprocess.call(['diff', '-u', bak_name, cxx_name])
 
 
-def test_wcwidth(tester):
+TEST_LIST = []
+
+
+def Testing(test_name):
+    def decorator(func):
+        TEST_LIST.append((test_name, func))
+        return func
+    return decorator
+
+
+@Testing('wcwidth')
+def test_wcwidth():
     import unicodedata
     values = [int(unicodedata.east_asian_width(chr(c)) in 'WF') for c
               in range(0x10000)]
-    tester('wcwidth', values)
+    return values
 
 
-def test_misc1(tester):
+@Testing('misc1')
+def test_misc1():
+    random.seed(0)
+
     # Linear
     values = [x * 32 + 170 for x in range(1024)]
     values.extend([0] * 1000)
@@ -162,10 +192,11 @@ def test_misc1(tester):
     values.extend([0] * 1000)
     values.extend(lo + hi * 65536 for (lo, hi) in zip(lo_values, hi_values))
 
-    tester('misc1', values)
+    return values
 
 
-def test_togb18030(tester):
+@Testing('togb18030')
+def test_togb18030():
     N = 0x110000
     values = [0] * N
     for k in range(N):
@@ -178,7 +209,7 @@ def test_togb18030(tester):
             gbv = gbv * 256 + c
         values[k] = gbv
 
-    tester('togb18030', values)
+    return {'values': values, 'opt': cxxlookup.OPT_Os}
 
 
 def main():
@@ -186,9 +217,12 @@ def main():
     parser.add_argument('-s', '--static',
                         help='Enable static analysis.',
                         action='store_true', default=False)
-    parser.add_argument('--no-unit-tests',
-                        help='Don\'t run unit tests.',
-                        dest='unit_tests', action='store_false', default=True)
+    parser.add_argument('-l', '--list-only',
+                        help='List tests only.',
+                        action='store_true', default=False)
+    parser.add_argument('--no-tests',
+                        help='Don\'t run tests.',
+                        dest='tests', action='store_false', default=True)
     parser.add_argument('-d', '--diff',
                         help='Show diff from last version if possible.',
                         default=False, action='store_true')
@@ -197,6 +231,8 @@ def main():
     parser.add_argument('-p', '--profiling', default=False,
                         action='store_true',
                         help='Run Python profiler')
+    parser.add_argument('test_names', nargs='*', metavar='TEST_NAME',
+                        help='Only run the specified tests.')
     args = parser.parse_args()
 
     if args.profiling:
@@ -206,13 +242,26 @@ def main():
 
     if args.static:
         static_check()
-    if args.unit_tests:
-        random.seed(0)  # Use fixed seed to get repeatable results
+
+    if args.list_only:
+        for test_name, test_func in TEST_LIST:
+            print(test_name)
+        return
+
+    if args.tests:
+        if args.test_names:
+            test_list = []
+            for test_name, test_func in TEST_LIST:
+                if test_name in args.test_names:
+                    test_list.append((test_name, test_func))
+
+        else:
+            test_list = TEST_LIST
 
         tester = Tester(args)
-        test_wcwidth(tester)
-        test_misc1(tester)
-        test_togb18030(tester)
+
+        for test_name, test_func in test_list:
+            tester.run(test_name, test_func)
 
 
 if __name__ == '__main__':
