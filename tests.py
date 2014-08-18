@@ -124,8 +124,13 @@ def Testing(func):
 
 @Testing
 def test_doctest():
+    TEST_MODS = [
+        cxxlookup.expr,
+        cxxlookup.groupify,
+    ]
     def run(*args, **kwargs):
-        doctest.testmod(cxxlookup.groupify)
+        for mod in TEST_MODS:
+            print(mod.__name__, ':', doctest.testmod(mod))
 
     return run
 

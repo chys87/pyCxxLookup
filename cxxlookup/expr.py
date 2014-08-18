@@ -328,6 +328,14 @@ class ExprRShift(ExprShift):
         return '({} >> {})'.format(left_s, right_s)
 
     def optimize(self, flags=0):
+        '''
+        >>> expr = RShift(Add(Var('c'), 30), 2)
+        >>> str(expr.optimize(Expr.optimize_absorb_constant))
+        '(((c + 2u) >> 2) + 7u)'
+        >>> expr = RShift(Add(Var('c'), Var('d'), -30), 2)
+        >>> str(expr.optimize(Expr.optimize_absorb_constant))
+        '(((c + d + 2u) >> 2) - 8u)'
+        '''
         self.optimize_children()
         left = self._left
         right = self._right
@@ -336,7 +344,7 @@ class ExprRShift(ExprShift):
             # (a + c1) >> c2
             # Convert to ((a + c1 % (1 << c2)) >> c2) + (c1 >> c2).
             if isinstance(left, ExprAdd) and isinstance(right, ExprConst) and \
-                    len(left._exprs) == 1 and left._const:
+                    left._const:
                 ctype = left._const._type
                 c1 = left._const._value
                 c2 = right._value
@@ -345,12 +353,10 @@ class ExprRShift(ExprShift):
 
                     remainder = c1 - (c1 >> c2 << c2)
 
-                    expr = left._exprs[0]
-                    if remainder:
-                        expr = ExprAdd((expr,), ExprConst(ctype, c1))
+                    expr = ExprAdd(left._exprs, ExprConst(ctype, remainder))
                     expr = ExprRShift(expr, ExprConst(U32, c2))
                     expr = ExprAdd((expr,), ExprConst(ctype, c1 >> c2))
-                    return expr
+                    return expr.optimize()
 
         # (a >> c1) >> c2 ==> a >> (c1 + c2)
         if isinstance(right, ExprConst) and \
@@ -563,12 +569,12 @@ class ExprTable(Expr):
         return self._var,
 
     def optimize(self, flags=0):
-        self.var = self._var.optimize(flags=Expr.optimize_absorb_constant)
+        self._var = self._var.optimize(flags=Expr.optimize_absorb_constant)
         # Absorb constants into offset
         if isinstance(self._var, ExprAdd) and \
                 self._var._const:
             self._offset -= self._var._const._value
-            self._var = ExprAdd(self._var._exprs, None)
+            self._var = ExprAdd(self._var._exprs, None).optimize()
         return self
 
     def table_bytes(self):
