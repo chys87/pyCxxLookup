@@ -1,2 +1,4 @@
 *.py[co]
 Session.vim
+.*.swp
+*~
