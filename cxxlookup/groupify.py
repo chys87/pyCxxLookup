@@ -32,6 +32,8 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 
+import numpy as np
+
 from . import utils
 
 
@@ -41,20 +43,29 @@ def __yield_linear_parts(array, linear_threshold, const_threshold):
     >>> a = np.array([1,1,2,3,4,5,5,4,3,2,2,2,2])
     >>> list(__yield_linear_parts(a, 5, 4))
     [(1, 6), (9, 13)]
+    >>> a = np.array([1,1,1,1,2,3,4,5,6,7,8,9,10])
+    >>> list(__yield_linear_parts(a, 5, 4))
+    [(0, 4), (4, 13)]
     '''
     L = array.size
-    limit = L - min(const_threshold, linear_threshold)
-    i = 0
-    while i <= limit:
-        delta = int(array[i+1]) - int(array[i])
-        j = i+2
-        while j < L and int(array[j]) - int(array[j-1]) == delta:
-            j += 1
-        if j-i >= linear_threshold or (delta == 0 and j-i >= const_threshold):
-            yield i, j
-            i = j
+    if L < 3:
+        return
+
+    delta = np.array(array[1:], np.int64) - np.array(array[:-1], np.int64)
+    unequal = (delta[1:] != delta[:-1]).nonzero()[0].tolist()
+
+    unequal.append(L - 2)
+
+    lo = 0
+    for i in unequal:
+        hi = i + 2
+        length = hi - lo
+        if length >= linear_threshold or (
+                length >= const_threshold and delta[lo] == 0):
+            yield lo, hi
+            lo = hi
         else:
-            i = j - 1
+            lo = hi - 1
 
 
 def _yield_linear_parts(array, opt):
