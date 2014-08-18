@@ -56,7 +56,7 @@ def make_code(base, values, hole, opt):
     codes = {}  # lo: (hi, code)
 
     def format_code(expr, subexprs):
-        main_str = '\t\t\treturn {};\n'.format(expr)
+        main_str = '\t\t\treturn {};\n'.format(utils.trim_brackets(str(expr)))
         main_statics = expr.statics()
 
         added_var_name = {'c', 'cl'}
