@@ -94,6 +94,14 @@ def _refine_groups(group, hole, opt):
             lo += l
             values = group[lo]
 
+    # Split a group if it takes the form: [a,...,a,b,...,b]
+    # Do it unconditionally!
+    for lo, values in list(group.items()):
+        k = utils.const_range(values)
+        if k < values.size and utils.is_const(values[k:]):
+            group[lo + k] = values[k:]
+            group[lo] = values[:k]
+
 
 def _remove_holes(group, hole, opt):
     hole_threshold = opt.hole_threshold
