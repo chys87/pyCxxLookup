@@ -32,6 +32,7 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 import argparse
+import doctest
 import os
 import random
 import subprocess
@@ -67,17 +68,24 @@ class Tester:
         print('Preparing test', name, '...')
 
         res = test_func()
-        base = 0
-        hole = None
-        opt = cxxlookup.OPT_DEFAULT
-        if isinstance(res, dict):
+
+        print('Running test', name, '...')
+
+        if callable(res):
+            res(self, name)
+            return
+
+        elif isinstance(res, dict):
             values = res['values']
-            base = res.get('base', base)
-            hole = res.get('hole', hole)
-            opt = res.get('opt', opt)
+            base = res.get('base', 0)
+            hole = res.get('hole', None)
+            opt = res.get('opt', cxxlookup.OPT_DEFAULT)
 
         else:
             values = res
+            base = 0
+            hole = None
+            opt = cxxlookup.OPT_DEFAULT
 
         cxx_name = os.path.join(self._tempdir, name + '.cpp')
         bak_name = None
@@ -89,8 +97,6 @@ class Tester:
             except FileNotFoundError:
                 pass
             os.rename(cxx_name, bak_name)
-
-        print('Running test', name, '...')
 
         cl = cxxlookup.CxxLookup('test_func', base, values, hole=hole, opt=opt)
 
@@ -114,6 +120,14 @@ def Testing(func):
         test_name = test_name[5:]
     TEST_LIST.append((test_name, func))
     return func
+
+
+@Testing
+def test_doctest():
+    def run(*args, **kwargs):
+        doctest.testmod(cxxlookup.groupify)
+
+    return run
 
 
 @Testing

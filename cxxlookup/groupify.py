@@ -35,10 +35,14 @@
 from . import utils
 
 
-def _yield_linear_parts(array, opt):
+def __yield_linear_parts(array, linear_threshold, const_threshold):
+    '''
+    >>> import numpy as np
+    >>> a = np.array([1,1,2,3,4,5,5,4,3,2,2,2,2])
+    >>> list(__yield_linear_parts(a, 5, 4))
+    [(1, 6), (9, 13)]
+    '''
     L = array.size
-    const_threshold = opt.const_threshold
-    linear_threshold = opt.linear_threshold
     limit = L - min(const_threshold, linear_threshold)
     i = 0
     while i <= limit:
@@ -51,6 +55,12 @@ def _yield_linear_parts(array, opt):
             i = j
         else:
             i = j - 1
+
+
+def _yield_linear_parts(array, opt):
+    const_threshold = opt.const_threshold
+    linear_threshold = opt.linear_threshold
+    return __yield_linear_parts(array, linear_threshold, const_threshold)
 
 
 def _naive_groupify(base, values, opt):
