@@ -165,6 +165,22 @@ def test_misc1(tester):
     tester('misc1', values)
 
 
+def test_togb18030(tester):
+    N = 0x110000
+    values = [0] * N
+    for k in range(N):
+        try:
+            gb = chr(k).encode('gb18030')
+        except UnicodeEncodeError:
+            gb = b''
+        gbv = 0
+        for c in gb:
+            gbv = gbv * 256 + c
+        values[k] = gbv
+
+    tester('togb18030', values)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-s', '--static',
@@ -196,6 +212,7 @@ def main():
         tester = Tester(args)
         test_wcwidth(tester)
         test_misc1(tester)
+        test_togb18030(tester)
 
 
 if __name__ == '__main__':
