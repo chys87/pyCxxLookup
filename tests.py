@@ -138,7 +138,7 @@ def test_doctest():
 def test_wcwidth():
     import unicodedata
     values = [int(unicodedata.east_asian_width(chr(c)) in 'WF') for c
-              in range(0x10000)]
+              in range(0x110000)]
     return values
 
 
