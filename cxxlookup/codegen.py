@@ -492,6 +492,13 @@ class MakeCodeForRange:
                 isinstance(expr._left, ExprVar) and \
                 isinstance(expr._right, ExprConst):
             return True
+        # (Var - const) >> const
+        if isinstance(expr, ExprRShift) and \
+                isinstance(expr._left, ExprAdd) and \
+                len(expr._left._exprs) == 1 and \
+                isinstance(expr._left._exprs[0], ExprVar) and \
+                isinstance(expr._right, ExprConst):
+            return True
         return False
 
     def _table_size(self, expr):
