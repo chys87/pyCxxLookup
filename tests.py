@@ -108,14 +108,15 @@ class Tester:
 TEST_LIST = []
 
 
-def Testing(test_name):
-    def decorator(func):
-        TEST_LIST.append((test_name, func))
-        return func
-    return decorator
+def Testing(func):
+    test_name = func.__name__
+    if test_name.startswith('test_'):
+        test_name = test_name[5:]
+    TEST_LIST.append((test_name, func))
+    return func
 
 
-@Testing('wcwidth')
+@Testing
 def test_wcwidth():
     import unicodedata
     values = [int(unicodedata.east_asian_width(chr(c)) in 'WF') for c
@@ -123,7 +124,7 @@ def test_wcwidth():
     return values
 
 
-@Testing('misc1')
+@Testing
 def test_misc1():
     random.seed(0)
 
@@ -195,7 +196,7 @@ def test_misc1():
     return values
 
 
-@Testing('togb18030')
+@Testing
 def test_togb18030():
     N = 0x110000
     values = [0] * N
