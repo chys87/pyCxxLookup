@@ -36,6 +36,8 @@ from string import Template
 import subprocess
 import tempfile
 
+import numpy as np
+
 
 class TestError(Exception):
     pass
@@ -43,13 +45,20 @@ class TestError(Exception):
 
 CODE_TEMPLATE = Template(r'''$headers
 #include <stdio.h>
+#include <stdlib.h>
+
+namespace {
 
 $code
 
+} // namespace
+
 int main(void) {
-    uint32_t i;
-    for (i = $lo; i < $hi; ++i)
-        printf("%u\n", $func_name(i));
+    uint32_t *out = new uint32_t[$hi - $lo];
+    for (uint32_t i = $lo; i < $hi; ++i)
+        out[i - $lo] = $func_name(i);
+    fwrite(out, sizeof(uint32_t), $hi - $lo, stdout);
+    delete[] out;
     return 0;
 }
 ''')
@@ -67,22 +76,20 @@ def check_result(exe_name, cwd, base, values):
         else:
             raise TestError("Process terminated by signal {}".format(-rc))
 
-    try:
-        got_values = [int(s.strip()) for s in test_output.splitlines()]
+    if len(test_output) != values.size * 4:
+        raise TestError("Incorrect number of data in test result "
+                        "(Expected {} bytes; Got {} bytes)".format(
+                            values.size * 4, len(test_output)))
 
-    except ValueError:
-        raise TestError("Malformed output")
+    got_values = np.fromstring(test_output, dtype=np.uint32)
 
-    if len(got_values) != len(values):
-        raise TestError("Incorrect number of lines in output "
-                        "(Expected: {}; Got: {})".format(len(values),
-                                                         len(got_values)))
+    unequal = (values != got_values)
 
-    for k in range(len(values)):
-        if values[k] != got_values[k]:
-            raise TestError("[{}]: Expected {}; Got {}".format(base + k,
-                                                               values[k],
-                                                               got_values[k]))
+    if np.any(unequal):
+        k = unequal.tostring().find(b'\x01')
+        raise TestError("[{}]: Expected {}; Got {}".format(base + k,
+                                                           values[k],
+                                                           got_values[k]))
 
 
 def _run_test(func_name, base, values, hole, headers, code,
@@ -92,12 +99,12 @@ def _run_test(func_name, base, values, hole, headers, code,
                                    code=code,
                                    func_name=func_name,
                                    lo=base,
-                                   hi=base + len(values))
+                                   hi=base + values.size)
 
     with open(os.path.join(cwd, src_name), 'w') as f:
         f.write(src)
 
-    rc = subprocess.call(['g++', '-O2', '-std=gnu++11',
+    rc = subprocess.call(['g++', '-O2', '-std=gnu++11', '-s',
                           '-o', exe_name, src_name],
                          cwd=cwd)
     if rc != 0:

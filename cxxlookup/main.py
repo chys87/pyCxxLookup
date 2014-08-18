@@ -47,10 +47,9 @@ class CxxLookup:
                  opt=OPT_DEFAULT):
         self._func_name = func_name
         self._base = base
-        self._values = values
-        self._array = utils.make_numpy_array(values)
+        self._values = utils.make_numpy_array(values)
         if hole is None:
-            hole = int(utils.most_common_element(self._array))
+            hole = int(utils.most_common_element(self._values))
         self._hole = hole
         self._opt = opt
 
@@ -63,7 +62,7 @@ class CxxLookup:
 
     @utils.profiling
     def _make_code(self):
-        code = codegen.make_code(self._base, self._array, self._hole,
+        code = codegen.make_code(self._base, self._values, self._hole,
                                  self._opt)
         return codegen.wrap_code(self._func_name, code)
 
