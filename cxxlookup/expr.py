@@ -87,7 +87,7 @@ class Expr:
         raise NotImplementedError
 
     def statics(self):
-        return ''.join(x.statics() for x in self.children())
+        return ''.join(filter(None, (x.statics() for x in self.children())))
 
     def children(self):
         return ()
