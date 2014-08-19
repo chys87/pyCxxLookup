@@ -315,8 +315,7 @@ class MakeCodeForRange:
                                        subexpr, subexpr_long,
                                        addition=offset+addition)
 
-                if expr.complexity() < self._opt.max_expr_complexity and (
-                        self._table_size(expr) <
+                if  (self._table_size(expr) <
                         num * TypeBytes[const_type(maxv)] - 16):
                     # inexpr * slope + expr
                     return Add(Mul(subexpr, slope), expr)
@@ -331,8 +330,7 @@ class MakeCodeForRange:
             expr = self._make_code(0, uniqs, table_name + '_value', expr, expr,
                                    addition=addition)
 
-            if expr.complexity() < self._opt.max_expr_complexity and (
-                    self._table_size(expr) <
+            if  (self._table_size(expr) <
                     num * TypeBytes[const_type(maxv)] - 16):
                 return expr
 
@@ -399,8 +397,7 @@ class MakeCodeForRange:
             reduced_values = values // gcd
             expr = self._make_code(lo, reduced_values, table_name + '_gcd',
                                    inexpr, inexpr_long)
-            if expr.complexity() < self._opt.max_expr_complexity and (
-                    self._table_size(expr) <
+            if (self._table_size(expr) <
                     num * TypeBytes[const_type(maxv)] - 16):
                 return Add(Mul(expr, gcd), addition + offset)
 
@@ -452,12 +449,10 @@ class MakeCodeForRange:
             hi_expr = self._make_code(
                 lo, hi_values, '{}_{}hi'.format(table_name, k),
                 subexpr, subexpr_long)
-            if (lo_expr.complexity() + hi_expr.complexity() <
-                    self._opt.max_expr_complexity):
-                table_size = self._table_size(lo_expr) + \
-                    self._table_size(hi_expr)
-                if table_size < num * TypeBytes[const_type(maxv)] - 16:
-                    return Add(lo_expr, Mul(hi_expr, hi_gcd))
+            table_size = self._table_size(lo_expr) + \
+                self._table_size(hi_expr)
+            if table_size < num * TypeBytes[const_type(maxv)] - 16:
+                return Add(lo_expr, Mul(hi_expr, hi_gcd))
 
         # Finally fall back to the simplest one-level table
         if addition > 0 and const_type(maxv) == const_type(maxv + addition):
