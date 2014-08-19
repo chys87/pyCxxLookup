@@ -576,18 +576,26 @@ class ExprTable(Expr):
 
     def statics(self):
         res = [self._var.statics()]
+        res_append = res.append
 
         indlen = len(hex(self._values.size))
         maxlen = len(hex(self._values.max()))
+
+        # I understand this is not the "correct" way to go, but this is
+        # for performance.
+        # If I don't care about performance, I could do '{:#0{}x}'.format(v, l)
+        line_start_format = '\t/* {{:#0{}x}} */'.format(indlen).format
+        value_format = ' {{:#0{}x}},'.format(maxlen).format
+
         line = 'const {} {}[{:#x}] = {{'.format(
             TypeNames[self._type], self._name, self._values.size)
         for i, v in enumerate(self._values):
-            if (i % 8) == 0:
-                res.append(line.rstrip() + '\n')
-                line = '\t/* {:#0{}x} */ '.format(i, indlen)
-            line += '{:#0{}x}, '.format(v, maxlen)
-        res.append(line.rstrip(', ') + '\n')
-        res.append('};\n\n')
+            if not (i & 7):
+                res_append(line + '\n')
+                line = line_start_format(i)
+            line += value_format(v)
+        res_append(line.rstrip(',') + '\n')
+        res_append('};\n\n')
         return ''.join(res)
 
     def rettype(self):
