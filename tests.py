@@ -127,6 +127,7 @@ def test_doctest():
         cxxlookup.expr,
         cxxlookup.groupify,
     ]
+
     def run(*args, **kwargs):
         for mod in TEST_MODS:
             print(mod.__name__, ':', doctest.testmod(mod))

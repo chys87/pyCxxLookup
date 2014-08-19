@@ -61,7 +61,7 @@ def make_code(base, values, hole, opt):
 
         added_var_name = {'c', 'cl'}
         subexpr_str = []
-        subexpr_statics = []
+        statics = []
 
         def add_var_in_expr(expr):
             # Depth-first search
@@ -75,10 +75,11 @@ def make_code(base, values, hole, opt):
                             TypeNames[var_expr.rettype()],
                             var_name,
                             utils.trim_brackets(str(var_expr))))
-                    subexpr_statics.append(var_expr.statics())
+                    statics.append(var_expr.statics())
                     added_var_name.add(var_name)
 
         add_var_in_expr(expr)
+        statics.append(main_statics)
 
         if not subexpr_str:
             code = main_str
@@ -87,7 +88,7 @@ def make_code(base, values, hole, opt):
             code += ''.join(subexpr_str)
             code += main_str
             code += '\t\t}\n'
-        return code, ''.join(subexpr_statics) + main_statics
+        return code, statics
 
     for lo, values in sorted(groups.items()):
         range_name = 'X_{:x}_{:x}'.format(lo, lo + values.size)
@@ -95,8 +96,7 @@ def make_code(base, values, hole, opt):
 
         code, static = format_code(expr, subexprs)
         codes[lo] = lo + values.size, code
-        if static:
-            res.append(static)
+        res.extend(filter(None, static))
 
     hole_code = format_code(Const(U32, hole), None)[0]
 
@@ -106,26 +106,25 @@ def make_code(base, values, hole, opt):
         if code != hole_code:
             rcode.setdefault(code, []).append((lo, hi))
 
-    func = 'inline uint32_t lookup(uint32_t c) noexcept {\n'
-    func += '\tuint64_t cl = c;\n'
-    func += '\t(void)cl;  /* Suppress warning if cl is never used */\n'
-    func += '\tswitch (c) {\n'
+    res.append('inline uint32_t lookup(uint32_t c) noexcept {\n'
+               '\tuint64_t cl = c;\n'
+               '\t(void)cl;  /* Suppress warning if cl is never used */\n'
+               '\tswitch (c) {\n')
     for lo, (hi, code) in sorted(codes.items()):
         if rcode[code][0][0] != lo:  # Printed at other case's
             continue
         for Lo, Hi in rcode[code]:
             if Hi - Lo == 1:
-                func += '\t\tcase {:#x}:\n'.format(Lo)
+                res.append('\t\tcase {:#x}:\n'.format(Lo))
             else:
-                func += '\t\tcase {:#x} ... {:#x}:\n'.format(Lo, Hi-1)
-        func += code
-    func += '\t\tdefault:\n'
-    func += hole_code
-    func += '\t}\n'
-    func += '}\n'
+                res.append('\t\tcase {:#x} ... {:#x}:\n'.format(Lo, Hi-1))
+        res.append(code)
+    res.append('\t\tdefault:\n')
+    res.append(hole_code)
+    res.append('\t}\n')
+    res.append('}\n')
 
-    res.append(func)
-    return '\n'.join(res)
+    return ''.join(res)
 
 
 class MakeCodeForRange:
