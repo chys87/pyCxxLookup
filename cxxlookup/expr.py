@@ -246,6 +246,8 @@ class ExprLShift(ExprShift):
         # Avoid the spurious 'u' after the constant
         right = self._right
         if isinstance(right, ExprConst):
+            if right._value in (1, 2, 3):
+                return '{} * {}'.format(self._left, 1 << right._value)
             return '({} << {})'.format(self._left, right._value)
         else:
             return '({} << {})'.format(self._left, right)
@@ -556,8 +558,13 @@ class ExprTable(Expr):
 
     def __str__(self):
         if self._offset > 0:
-            return '{}[{} - {:#x}l]'.format(
-                self._name, self._var, self._offset)
+            # Add an extra 'l' so that the constant is absorbed by the
+            # address of the array
+            offset_s = '{:#x}'.format(self._offset)
+            if self._var.rettype() < I64:
+                offset_s += 'l'
+            return '{}[{} - {}]'.format(
+                self._name, self._var, offset_s)
         elif self._offset < 0:
             # Don't add 'l' in this case, to avoid signed/unsigned
             # extension problems
