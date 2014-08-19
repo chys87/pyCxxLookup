@@ -494,6 +494,29 @@ class ExprCompare(ExprBinary):
     def rettype(self):
         return I32
 
+    def optimize(self, flags=0):
+        self.optimize_children()
+
+        left = self._left
+        right = self._right
+
+        # (a >> c1) == c2
+        # a >= (c2 << c1) && a < ((c2 + 1) << c1)
+        # unsinged(a - (c2 << c1)) < (1 << c1)
+        if self._compare == '==' and \
+                isinstance(left, ExprRShift) and \
+                left._left.rettype() == U32 and \
+                isinstance(left._right, ExprConst) and \
+                isinstance(right, ExprConst) and \
+                right._type == U32:
+            c1 = left._right._value
+            c2 = right._value
+            expr = ExprAdd((left._left,), ExprConst(U32, -(c2 << c1)))
+            expr = ExprCompare(expr, '<', ExprConst(U32, 1 << c1))
+            return expr.optimize(flags)
+
+        return self
+
 
 class ExprCast(Expr):
     def __init__(self, type, value):
