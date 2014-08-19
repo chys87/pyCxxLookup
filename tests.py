@@ -79,13 +79,16 @@ class Tester:
             values = res['values']
             base = res.get('base', 0)
             hole = res.get('hole', None)
-            opt = res.get('opt', cxxlookup.OPT_DEFAULT)
+            opt = res.get('opt', cxxlookup.OPT_Os)
 
         else:
             values = res
             base = 0
             hole = None
-            opt = cxxlookup.OPT_DEFAULT
+            opt = cxxlookup.OPT_Os
+
+        # In the tests, we do OPT_Os by default, which produces the most
+        # complicated expressions
 
         cxx_name = os.path.join(self._tempdir, name + '.cpp')
         bak_name = cxx_name + '.bak'
