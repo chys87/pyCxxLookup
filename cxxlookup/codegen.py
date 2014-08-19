@@ -107,7 +107,7 @@ def make_code(base, values, hole, opt):
             rcode.setdefault(code, []).append((lo, hi))
 
     func = 'inline uint32_t lookup(uint32_t c) noexcept {\n'
-    func += '\tunsigned long cl = c;\n'
+    func += '\tuint64_t cl = c;\n'
     func += '\t(void)cl;  /* Suppress warning if cl is never used */\n'
     func += '\tswitch (c) {\n'
     for lo, (hi, code) in sorted(codes.items()):
@@ -150,7 +150,7 @@ class MakeCodeForRange:
             return
         expr = self._make_code(
             self._lo, self._values, self._table_name,
-            Var('c'), Var('cl'))
+            Var(U32, 'c'), Var(U64, 'cl'))
         expr = expr.optimize()
 
         # Final optimization: Remove unnecessary explicit cast
@@ -169,7 +169,7 @@ class MakeCodeForRange:
             ind //= 26
         s = chr(ord('A') + ind) + s
         self._named_subexprs[s] = expr
-        return Var(s)
+        return Var(expr.rettype(), s)
 
     def _make_code(self, lo, values, table_name, inexpr, inexpr_long,
                    addition=0):

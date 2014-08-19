@@ -120,14 +120,15 @@ class Expr:
 
 
 class ExprVar(Expr):
-    def __init__(self, name):
+    def __init__(self, type, name):
+        self._type = type
         self._name = name
 
     def __str__(self):
         return self._name
 
     def rettype(self):
-        return U32  # Assume so
+        return self._type
 
 
 class ExprConst(Expr):
@@ -334,10 +335,10 @@ class ExprRShift(ExprShift):
 
     def optimize(self, flags=0):
         '''
-        >>> expr = RShift(Add(Var('c'), 30), 2)
+        >>> expr = RShift(Add(Var(U32, 'c'), 30), 2)
         >>> str(expr.optimize(Expr.optimize_absorb_constant))
         '(((c + 2u) >> 2) + 7u)'
-        >>> expr = RShift(Add(Var('c'), Var('d'), -30), 2)
+        >>> expr = RShift(Add(Var(U32, 'c'), Var(U32, 'd'), -30), 2)
         >>> str(expr.optimize(Expr.optimize_absorb_constant))
         '(((c + d + 2u) >> 2) - 8u)'
         '''
@@ -611,8 +612,8 @@ def exprize(expr,
         return ExprConst(U32, int(expr))
 
 
-def Var(name):
-    return ExprVar(name)
+def Var(type, name):
+    return ExprVar(type, name)
 
 
 def Const(type, value):
