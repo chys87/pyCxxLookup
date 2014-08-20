@@ -147,7 +147,8 @@ def _remove_holes(group, hole, opt):
     for lo, values in list(group.items()):
         if len(values) < group_threshold and not utils.is_linear(values):
             for v in values:
-                group[lo] = [v]
+                if v != hole:
+                    group[lo] = utils.make_numpy_array([v])
                 lo += 1
 
 
