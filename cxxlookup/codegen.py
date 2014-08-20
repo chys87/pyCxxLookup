@@ -156,6 +156,10 @@ class MakeCodeForRange:
         while isinstance(expr, ExprCast) and expr._type >= I32:
             expr = expr._value
 
+        # After final optimization, let's extract complicated expressions
+        # as variables for code readability
+        expr.replace_complicated_subexpressions(8, self._make_subexpr)
+
         self._expr = expr
 
     def _make_subexpr(self, expr):

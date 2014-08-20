@@ -115,6 +115,13 @@ class Expr:
             stk_extend(expr.children())
         return res
 
+    def _complicated(self, threshold):
+        return len(self.walk()) >= threshold
+
+    def replace_complicated_subexpressions(self, threshold, callback):
+        for subexpr in self.children():
+            subexpr.replace_complicated_subexpressions(threshold, callback)
+
 
 class ExprVar(Expr):
     def __init__(self, type, name):
@@ -145,6 +152,10 @@ class ExprConst(Expr):
 
     def rettype(self):
         return self._type
+
+    def _complicated(self, threshold):
+        # Always assign 64-bit constant to a variable for readability.
+        return (self._type == U64)
 
     @staticmethod
     def combine(const_exprs):
@@ -212,6 +223,18 @@ class ExprAdd(Expr):
 
         return self
 
+    def replace_complicated_subexpressions(self, threshold, callback):
+        super().replace_complicated_subexpressions(threshold, callback)
+        exprs = []
+        for expr in self._exprs:
+            if expr._complicated(threshold):
+                expr = callback(expr)
+            exprs.append(expr)
+        self._exprs = tuple(exprs)
+
+        if self._const and self._const._complicated(threshold):
+            self._const = callback(self._const)
+
 
 class ExprBinary(Expr):
     def __init__(self, left, right):
@@ -231,6 +254,13 @@ class ExprBinary(Expr):
 
     def rettype(self):
         return max(I32, self._left.rettype(), self._right.rettype())
+
+    def replace_complicated_subexpressions(self, threshold, callback):
+        super().replace_complicated_subexpressions(threshold, callback)
+        if self._left._complicated(threshold):
+            self._left = callback(self._left)
+        if self._right._complicated(threshold):
+            self._right = callback(self._right)
 
 
 class ExprShift(ExprBinary):
@@ -650,6 +680,11 @@ class ExprTable(Expr):
 
     def table_bytes(self):
         return self._values.size * TypeBytes[self._type]
+
+    def replace_complicated_subexpressions(self, threshold, callback):
+        super().replace_complicated_subexpressions(threshold, callback)
+        if self._var._complicated(threshold):
+            self._var = callback(self._var)
 
 
 ### Factory functions
