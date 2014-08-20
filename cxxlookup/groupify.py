@@ -89,31 +89,26 @@ def _naive_groupify(base, values, opt):
 
 
 def _refine_groups(group, hole, opt):
-    # Split a group if it will result in at least one subgroups
+    # Split a group if it will result in two subgroups
     # with range < 256
-    for lo, values in list(group.items()):
+    split_threshold = opt.split_threshold
+    for threshold in (65536, 256):
 
-        if values.size <= opt.split_threshold or utils.is_linear(values):
-            continue
+        for lo, values in list(group.items()):
 
-        # Split from backward.
-        while True:
-            h = utils.range_limit(values[::-1], 256)
-            if (h == values.size) or (h < opt.split_threshold):
-                break
-            h = values.size - h
-            group[lo + h] = values[h:]
-            group[lo] = values = values[:h]
+            if values.size <= 2 * split_threshold or utils.is_linear(values):
+                continue
 
-        # Split from front.
-        while True:
-            l = utils.range_limit(values, 256)
-            if (l == values.size) or (l < opt.split_threshold):
-                break
-            group[lo+l] = values[l:]
+            l = utils.range_limit(values, threshold)
+            if not split_threshold <= l <= values.size - split_threshold:
+                continue
+
+            right = values[l:]
+            if right.max() - right.min() >= threshold:
+                continue
+
+            group[lo + l] = right
             group[lo] = values[:l]
-            lo += l
-            values = group[lo]
 
     # Split a group if it takes the form: [a,...,a,b,...,b]
     # Do it unconditionally!
