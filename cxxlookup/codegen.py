@@ -315,7 +315,7 @@ class MakeCodeForRange:
                                        subexpr, subexpr_long,
                                        addition=offset+addition)
 
-                if  (self._table_size(expr) <
+                if (self._table_size(expr) <
                         num * TypeBytes[const_type(maxv)] - 16):
                     # inexpr * slope + expr
                     return Add(Mul(subexpr, slope), expr)
@@ -330,7 +330,7 @@ class MakeCodeForRange:
             expr = self._make_code(0, uniqs, table_name + '_value', expr, expr,
                                    addition=addition)
 
-            if  (self._table_size(expr) <
+            if (self._table_size(expr) <
                     num * TypeBytes[const_type(maxv)] - 16):
                 return expr
 
