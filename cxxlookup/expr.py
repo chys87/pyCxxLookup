@@ -511,7 +511,7 @@ class ExprCompare(ExprBinary):
                 right._type == U32:
             c1 = left._right._value
             c2 = right._value
-            if c1 < 32 and (c2 << c1) < 2**32:
+            if ((c2 + 1) << c1) <= 2**32:
                 expr = ExprAdd((left._left,), ExprConst(U32, -(c2 << c1)))
                 expr = ExprCompare(expr, '<', ExprConst(U32, 1 << c1))
                 return expr.optimize(flags)
