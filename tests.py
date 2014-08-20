@@ -38,6 +38,7 @@ import random
 import subprocess
 import sys
 import tempfile
+import unicodedata
 
 import cxxlookup
 
@@ -140,7 +141,6 @@ def test_doctest():
 
 @Testing
 def test_wcwidth():
-    import unicodedata
     values = [int(unicodedata.east_asian_width(chr(c)) in 'WF') for c
               in range(0x110000)]
     return values
@@ -223,16 +223,40 @@ def test_togb18030():
     N = 0x110000
     values = [0] * N
     for k in range(N):
-        try:
-            gb = chr(k).encode('gb18030')
-        except UnicodeEncodeError:
+        unic = chr(k)
+        if not unicodedata.name(unic, None):
             gb = b''
+        else:
+            try:
+                gb = unic.encode('gb18030')
+            except UnicodeEncodeError:
+                gb = b''
         gbv = 0
         for c in gb:
             gbv = gbv * 256 + c
         values[k] = gbv
 
     return {'values': values, 'opt': cxxlookup.OPT_Os}
+
+
+@Testing
+def test_fromgb18030():
+    def conv(*s):
+        try:
+            unic = bytes(s).decode('gb18030')
+            if unicodedata.name(unic, None):
+                return ord(unic)
+            return 0
+        except (TypeError, ValueError, UnicodeDecodeError):
+            return 0
+
+    values = [conv(a, b) for a in range(0x81, 0xff) for b in range(0x40, 0xff)]
+    values.extend([conv(a, b, c, d)
+                   for a in range(0x81, 0xff)
+                   for b in range(0x30, 0x3a)
+                   for c in range(0x81, 0xff)
+                   for d in range(0x30, 0x3a)])
+    return values
 
 
 def main():
