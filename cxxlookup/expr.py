@@ -511,9 +511,24 @@ class ExprCompare(ExprBinary):
                 right._type == U32:
             c1 = left._right._value
             c2 = right._value
-            expr = ExprAdd((left._left,), ExprConst(U32, -(c2 << c1)))
-            expr = ExprCompare(expr, '<', ExprConst(U32, 1 << c1))
-            return expr.optimize(flags)
+            if c1 < 32 and (c2 << c1) < 2**32:
+                expr = ExprAdd((left._left,), ExprConst(U32, -(c2 << c1)))
+                expr = ExprCompare(expr, '<', ExprConst(U32, 1 << c1))
+                return expr.optimize(flags)
+
+        # (a >> c1) < c2
+        # a < (c2 << c1)
+        if self._compare == '<' and \
+                isinstance(left, ExprRShift) and \
+                left._left.rettype() == U32 and \
+                isinstance(left._right, ExprConst) and \
+                isinstance(right, ExprConst) and \
+                right._type == U32:
+            c1 = left._right._value
+            c2 = right._value
+            if (c2 << c1) < 2**32:
+                expr = ExprCompare(left._left, '<', ExprConst(U32, c2 << c1))
+                return expr.optimize(flags)
 
         return self
 
