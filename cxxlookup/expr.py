@@ -722,9 +722,10 @@ def LShift(left, right):
 def RShift(left, right):
     # Promote left
     left = exprize(left)
-    if left.rettype() in (U8, U16):
-        # Intentionally don't catch I8/I16/I32
+    if left.rettype() < U32:
         left = ExprCast(U32, left)
+    elif left.rettype() == I64:
+        left = ExprCast(U64, left)
     return ExprRShift(left, exprize(right))
 
 

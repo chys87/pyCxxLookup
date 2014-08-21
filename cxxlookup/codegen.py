@@ -206,12 +206,19 @@ class MakeCodeForRange:
 
     def _make_code(self, lo, values, table_name, inexpr, inexpr_long,
                    addition=0):
+        exprs = self._yield_code(lo, values, table_name, inexpr,
+                                 inexpr_long, addition)
+        exprs = (expr.optimize() for expr in exprs)
+        return min(exprs, key=self._overhead)
+
+    def _yield_code(self, lo, values, table_name, inexpr, inexpr_long,
+                    addition=0):
         """
         Everything in values must be positive; addition may be negative.
         The final result has type uint32_t even if it may be negative.
 
-        Return:
-            A instance of some child class of Expr
+        Yield:
+            instances of some child class of Expr
         """
         minv = int(values.min())
         if minv != 0:
@@ -235,26 +242,29 @@ class MakeCodeForRange:
 
         # Constant
         if uniq == 1:
-            return Const(U32, addition)
+            yield Const(U32, addition)
+            return
 
         # [0,1] => [c1,c2]. Better to use ExprCond than linear
         if (lo == 0) and (num == 2):
             c0, c1 = values + addition
             if c1 == c0 + 1:
                 if c0 == 0:
-                    return inexpr
+                    yield inexpr
                 else:
-                    return Add(inexpr, Const(U32, c0))
+                    yield Add(inexpr, Const(U32, c0))
             elif c0 == 0 and (c1 & (c1 - 1)) == 0:
-                return LShift(inexpr, Const(U32, int(c1).bit_length() - 1))
+                yield LShift(inexpr, Const(U32, int(c1).bit_length() - 1))
             else:
-                return Cond(inexpr, c1, c0)
+                yield Cond(inexpr, c1, c0)
+            return
 
         # Linear
         if (uniq == num) and utils.is_linear(values):
             slope = int(values[1]) - int(values[0])
             # (c - lo) * slope + addition
-            return Add(Mul(Add(inexpr, -lo), slope), int(values[0]) + addition)
+            yield Add(Mul(Add(inexpr, -lo), slope), int(values[0]) + addition)
+            return
 
         # Not linear, but only two distinct values.
         if uniq == 2:
@@ -262,17 +272,18 @@ class MakeCodeForRange:
             rk = utils.const_range(values[::-1])
             if k + rk == num:  # [a,...,a,b,...,b]
                 if k == 1:
-                    return Cond(Compare(inexpr, '==', lo),
-                                values[0] + addition,
-                                values[-1] + addition)
+                    yield Cond(Compare(inexpr, '==', lo),
+                               values[0] + addition,
+                               values[-1] + addition)
                 elif rk == 1:
-                    return Cond(Compare(inexpr, '==', lo + k),
-                                values[-1] + addition,
-                                values[0] + addition)
+                    yield Cond(Compare(inexpr, '==', lo + k),
+                               values[-1] + addition,
+                               values[0] + addition)
                 else:
-                    return Cond(Compare(inexpr, '<', lo + k),
-                                values[0] + addition,
-                                values[-1] + addition)
+                    yield Cond(Compare(inexpr, '<', lo + k),
+                               values[0] + addition,
+                               values[-1] + addition)
+                return
 
             elif values[0] == values[-1] and utils.is_const(values[k:num-rk]):
                 # [a, ..., a, b, ..., b, a, ..., a]
@@ -282,7 +293,8 @@ class MakeCodeForRange:
                 else:
                     subinexpr = Cast(U32, Add(inexpr, -lo - k))
                     cond = Compare(subinexpr, '<', bcount)
-                return Cond(cond, values[k] + addition, values[0] + addition)
+                yield Cond(cond, values[k] + addition, values[0] + addition)
+                return
 
             elif num <= 64:
                 # Use bit test.
@@ -299,7 +311,8 @@ class MakeCodeForRange:
                     expr = Cond(expr, value1 + addition, value0 + addition)
                 elif Bits > U32:
                     expr = Cast(U32, expr)
-                return expr
+                yield expr
+                return
 
         # Can we pack them into one 64-bit integer?
         if num * maxv_bits <= 64:
@@ -323,7 +336,8 @@ class MakeCodeForRange:
             expr = Mul(Add(inexpr, -lo), bits)
             expr = And(Cast(U32, RShift(Const(Bits, mask), expr)),
                        (1 << bits) - 1)
-            return Add(expr, addition - offset)
+            yield Add(expr, addition - offset)
+            return
 
         # Most elements are almost linear, but a few outliers exist.
         slope, slope_count = map(int, utils.most_common_element_count(
@@ -349,10 +363,8 @@ class MakeCodeForRange:
                                        subexpr, subexpr_long,
                                        addition=offset+addition)
 
-                if (self._table_size(expr) <
-                        num * TypeBytes[const_type(maxv)] - 16):
-                    # inexpr * slope + expr
-                    return Add(Mul(subexpr, slope), expr)
+                # inexpr * slope + expr
+                yield Add(Mul(subexpr, slope), expr)
 
         # Two-level lookup?
         if maxv > num > uniq * 4 // 3:
@@ -364,9 +376,7 @@ class MakeCodeForRange:
             expr = self._make_code(0, uniqs, table_name + '_value', expr, expr,
                                    addition=addition)
 
-            if (self._table_size(expr) <
-                    num * TypeBytes[const_type(maxv)] - 16):
-                return expr
+            yield expr
 
         # Try using "compressed" table. 2->1
         if maxv_bits in (3, 4) and num > 16:
@@ -387,7 +397,8 @@ class MakeCodeForRange:
             expr_right = LShift(And(expr, 1), 2)
             expr = And(RShift(expr_left, expr_right), 15)
             expr = Add(expr, addition - offset)
-            return expr
+            yield expr
+            return
 
         # Try using "compressed" table. 4->1
         if maxv_bits == 2 and num > 32:
@@ -405,7 +416,8 @@ class MakeCodeForRange:
             expr_right = LShift(And(expr, 3), 1)
             expr = And(RShift(expr_left, expr_right), 3)
             expr = Add(expr, addition)
-            return expr
+            yield expr
+            return
 
         # Try using "bitvector". 8->1
         if (maxv == 1) and num > 64:
@@ -422,7 +434,8 @@ class MakeCodeForRange:
             expr_right = And(expr, 7)
             expr = And(RShift(expr_left, expr_right), 1)
             expr = Add(expr, addition)
-            return expr
+            yield expr
+            return
 
         # GCD may help
         gcd = utils.gcd_reduce(values)
@@ -431,9 +444,7 @@ class MakeCodeForRange:
             reduced_values = values // gcd
             expr = self._make_code(lo, reduced_values, table_name + '_gcd',
                                    inexpr, inexpr_long)
-            if (self._table_size(expr) <
-                    num * TypeBytes[const_type(maxv)] - 16):
-                return Add(Mul(expr, gcd), addition + offset)
+            yield Add(Mul(expr, gcd), addition + offset)
 
         # Try splitting the data into low and high parts
         for k in (16, 8, 4):
@@ -483,10 +494,7 @@ class MakeCodeForRange:
             hi_expr = self._make_code(
                 lo, hi_values, '{}_{}hi'.format(table_name, k),
                 subexpr, subexpr_long)
-            table_size = self._table_size(lo_expr) + \
-                self._table_size(hi_expr)
-            if table_size < num * TypeBytes[const_type(maxv)] - 16:
-                return Add(lo_expr, Mul(hi_expr, hi_gcd))
+            yield Add(lo_expr, Mul(hi_expr, hi_gcd))
 
         # Finally fall back to the simplest one-level table
         if addition > 0 and const_type(maxv) == const_type(maxv + addition):
@@ -495,7 +503,7 @@ class MakeCodeForRange:
             expr = Table(table_name, values, inexpr_long, lo)
             if addition != 0:
                 expr = Add(expr, addition)
-        return expr
+        yield expr
 
     def _smart_subexpr(self, expr, expr_long):
         if self._very_simple(expr):
@@ -529,11 +537,13 @@ class MakeCodeForRange:
             return True
         return False
 
-    def _table_size(self, expr):
-        """Get the total number of bytes tables in the expression.
-        This is useful to determine whether an optimization is effective.
+    def _overhead(self, expr):
+        """Estimate the overhead of an expression.
+        We use the total number of bytes in tables plus additional overheads
+        for each Expr instance.
         """
         total_bytes = 0
+        extra = 0
 
         visited_subexprs = {'c', 'cl'}
         to_scan_list = [expr]
@@ -546,8 +556,9 @@ class MakeCodeForRange:
                     to_scan_list.append(self._named_subexprs[var_name])
             for x in expr.walk(ExprTable):
                 total_bytes += x.table_bytes()
+            extra += len(expr.walk()) - len(expr.walk(ExprVar))
 
-        return total_bytes
+        return total_bytes + extra * self._opt.overhead_multiply
 
 
 WRAP_TEMPLATE = string.Template(r'''namespace {

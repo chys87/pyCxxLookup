@@ -38,24 +38,26 @@ class Options:
                  const_threshold,
                  hole_threshold,
                  split_threshold,
-                 group_threshold):
+                 group_threshold,
+                 overhead_multiply):
         self.linear_threshold = linear_threshold
         self.const_threshold = const_threshold
         self.hole_threshold = hole_threshold
         self.split_threshold = split_threshold
         self.group_threshold = group_threshold
+        self.overhead_multiply = overhead_multiply
 
 
 # Prefere smaller code size
-OPT_Os = Options(64, 32, 24, 128, 3)
+OPT_Os = Options(64, 32, 24, 128, 3, 4)
 
 # Prefer a balance
-OPT_O2 = Options(256, 96, 64, 512, 3)
+OPT_O2 = Options(256, 96, 64, 512, 3, 8)
 
 # Agressively optimize for performance
-OPT_O3 = Options(512, 192, 128, 1024, 3)
+OPT_O3 = Options(512, 192, 128, 1024, 3, 16)
 
 # Even more aggressive
-OPT_O4 = Options(1024, 384, 256, 2048, 3)
+OPT_O4 = Options(1024, 384, 256, 2048, 3, 32)
 
 OPT_DEFAULT = OPT_O2
