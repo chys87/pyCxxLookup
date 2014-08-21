@@ -188,11 +188,19 @@ class MakeCodeForRange:
         ind = self._subexpr_ind
         self._subexpr_ind = ind + 1
 
+        bits = 1
+        expressible = 26
+
+        while ind >= expressible:
+            bits += 1
+            ind -= expressible
+            expressible *= 26
+
         s = ''
-        while ind >= 26:
+        for _ in range(bits):
             s = chr(ord('A') + (ind % 26)) + s
             ind //= 26
-        s = chr(ord('A') + ind) + s
+
         self._named_subexprs[s] = expr
         return Var(expr.rettype(), s)
 
