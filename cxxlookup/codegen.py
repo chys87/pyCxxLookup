@@ -70,16 +70,22 @@ def make_code(base, values, hole, opt):
                 if var_name not in added_var_name:
                     var_expr = subexprs[var_name]
                     add_var_in_expr(var_expr)
-                    subexpr_str.append(
-                        '\t\t\t{} {} = {};\n'.format(
-                            TypeNames[var_expr.rettype()],
-                            var_name,
-                            utils.trim_brackets(str(var_expr))))
+
+                    var_type = var_expr.rettype()
+                    type_name = TypeNames[var_type]
+                    while isinstance(var_expr, ExprCast) and \
+                            var_expr._type >= var_type:
+                        var_expr = var_expr._value
+
+                    subexpr_str.append('\t\t\t{} {} = {};\n'.format(
+                        type_name, var_name,
+                        utils.trim_brackets(str(var_expr))))
                     statics.append(var_expr.statics())
                     added_var_name.add(var_name)
 
         add_var_in_expr(expr)
         statics.append(main_statics)
+        statics.sort()
 
         if not subexpr_str:
             code = main_str
@@ -152,13 +158,29 @@ class MakeCodeForRange:
             Var(U32, 'c'), Var(U64, 'cl'))
         expr = expr.optimize()
 
+        # Remove unreachable subexpressions
+        reachable = {'c', 'cl'}
+        to_visit = [expr]
+        while to_visit:
+            x = to_visit.pop()
+            for subexpr in x.walk(ExprVar):
+                if subexpr._name not in reachable:
+                    reachable.add(subexpr._name)
+                    to_visit.append(self._named_subexprs[subexpr._name])
+
+        for name in list(self._named_subexprs):
+            if name not in reachable:
+                del self._named_subexprs[name]
+
+        # Extract complicated expressions
+        # as variables for code readability
+        expr.replace_complicated_subexpressions(8, self._make_subexpr)
+        for subexpr in list(self._named_subexprs.values()):
+            subexpr.replace_complicated_subexpressions(8, self._make_subexpr)
+
         # Final optimization: Remove unnecessary explicit cast
         while isinstance(expr, ExprCast) and expr._type >= I32:
             expr = expr._value
-
-        # After final optimization, let's extract complicated expressions
-        # as variables for code readability
-        expr.replace_complicated_subexpressions(8, self._make_subexpr)
 
         self._expr = expr
 
