@@ -338,29 +338,19 @@ class ExprLShift(ExprShift):
 
 
 class ExprRShift(ExprShift):
-    def __str__(self):
+    def __init__(self, left, right):
+        super().__init__(left, right)
         # Always logical shift
-        left_type = self._left.rettype()
-        if left_type < U32:
-            convert_to = 'uint32_t'
-        elif left_type == I64:
-            convert_to = 'uint64_t'
-        else:
-            convert_to = None
+        assert left.rettype() in (U8, U16, U32, U64)
 
-        if convert_to:
-            left_s = '{}({})'.format(convert_to,
-                                     utils.trim_brackets(str(self._left)))
-        else:
-            left_s = str(self._left)
-
+    def __str__(self):
         # Avoid the spurious 'u' after the constant
         if isinstance(self._right, ExprConst):
             right_s = str(self._right._value)
         else:
             right_s = str(self._right)
 
-        return '({} >> {})'.format(left_s, right_s)
+        return '({} >> {})'.format(self._left, right_s)
 
     def optimize(self, flags=0):
         '''
@@ -730,7 +720,12 @@ def LShift(left, right):
 
 
 def RShift(left, right):
-    return ExprRShift(exprize(left), exprize(right))
+    # Promote left
+    left = exprize(left)
+    if left.rettype() in (U8, U16):
+        # Intentionally don't catch I8/I16/I32
+        left = ExprCast(U32, left)
+    return ExprRShift(left, exprize(right))
 
 
 def Mul(left, right):
