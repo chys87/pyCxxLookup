@@ -36,6 +36,11 @@ import sys
 
 import numpy as np
 
+try:
+    from . import _speedups
+except ImportError:
+    _speedups = None
+
 
 def make_numpy_array(values):
     return np.array(values, dtype=np.uint32)
@@ -134,7 +139,15 @@ def stridize(array, n, default=0):
         return tmp.reshape([l // n + 1, n]).T
 
 
-def gcd_many(array, int=int):
+def gcd_many(array, _speedups=_speedups, np_uint32=np.uint32):
+    """
+    >>> gcd_many(np.array([26, 39, 52], np.uint32))
+    13
+    >>> gcd_many(np.array([4, 8, 7], np.uint32))
+    1
+    """
+    if _speedups and array.dtype == np_uint32:
+        return _speedups.gcd_many(array.tostring())
     res = 0
     for v in array:
         v = int(v)

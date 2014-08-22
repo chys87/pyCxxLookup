@@ -130,6 +130,7 @@ def test_doctest():
     TEST_MODS = [
         cxxlookup.expr,
         cxxlookup.groupify,
+        cxxlookup.utils,
     ]
 
     def run(*args, **kwargs):

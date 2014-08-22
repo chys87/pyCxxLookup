@@ -220,6 +220,9 @@ class MakeCodeForRange:
         Yield:
             instances of some child class of Expr
         """
+        if values.dtype != np.uint32:
+            values = np.array(values, np.uint32)
+
         minv = int(values.min())
         if minv != 0:
             values = values - minv
@@ -451,7 +454,7 @@ class MakeCodeForRange:
             if not k < maxv_bits <= 2 * k:
                 continue
 
-            lomask = (1 << k) - 1
+            lomask = np.uint32((1 << k) - 1)
             lo_values = values & lomask
             hi_values = values & ~lomask
 
