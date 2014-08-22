@@ -537,7 +537,9 @@ class MakeCodeForRange:
             return True
         return False
 
-    def _overhead(self, expr):
+    def _overhead(self, expr,
+                  isinstance=isinstance, ExprVar=ExprVar,
+                  ExprTable=ExprTable, ExprCast=ExprCast, ExprCond=ExprCond):
         """Estimate the overhead of an expression.
         We use the total number of bytes in tables plus additional overheads
         for each Expr instance.
@@ -549,14 +551,21 @@ class MakeCodeForRange:
         to_scan_list = [expr]
         while to_scan_list:
             expr = to_scan_list.pop()
-            for x in expr.walk(ExprVar):
-                var_name = x._name
-                if var_name not in visited_subexprs:
-                    visited_subexprs.add(var_name)
-                    to_scan_list.append(self._named_subexprs[var_name])
-            for x in expr.walk(ExprTable):
-                total_bytes += x.table_bytes()
-            extra += len(expr.walk()) - len(expr.walk(ExprVar))
+
+            for x in expr.walk():
+                extra += 1
+                if isinstance(x, ExprVar):
+                    var_name = x._name
+                    if var_name not in visited_subexprs:
+                        visited_subexprs.add(var_name)
+                        to_scan_list.append(self._named_subexprs[var_name])
+                    extra -= 1
+                elif isinstance(x, ExprTable):
+                    total_bytes += x.table_bytes()
+                elif isinstance(x, ExprCast):
+                    extra -= 1
+                elif isinstance(x, ExprCond):
+                    extra += .5
 
         return total_bytes + extra * self._opt.overhead_multiply
 

@@ -102,7 +102,7 @@ class Expr:
     optimize_absorb_constant = 1
 
     def walk(self, type_or_type_tuple=None,
-             len=len, isinstance=isinstance):
+             isinstance=isinstance):
         res = []
         stk = [self]
         stk_pop = stk.pop
