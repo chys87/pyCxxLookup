@@ -82,6 +82,9 @@ def const_type(value):
         return U8
 
 
+_OPTIMIZE_ABSORB_CONSTANT = 1
+
+
 class Expr:
     def __str__(self):
         raise NotImplementedError
@@ -98,8 +101,6 @@ class Expr:
 
     def optimize(self, flags=0):
         return self
-
-    optimize_absorb_constant = 1
 
     def walk(self, type_or_type_tuple=None,
              isinstance=isinstance):
@@ -153,6 +154,9 @@ class ExprConst(Expr):
     def rettype(self):
         return self._type
 
+    def optimize(self, flags=0):
+        return self
+
     def _complicated(self, threshold):
         # Always assign 64-bit constant to a variable for readability.
         return (self._type == U64)
@@ -196,12 +200,11 @@ class ExprAdd(Expr):
 
     def optimize(self, flags=0):
 
-        if self._const:
-            flags |= Expr.optimize_absorb_constant
-
         exprs = []
         const_exprs = []
+
         if self._const:
+            flags |= _OPTIMIZE_ABSORB_CONSTANT
             const_exprs.append(self._const)
 
         for expr in self._exprs:
@@ -224,9 +227,9 @@ class ExprAdd(Expr):
         return self
 
     def replace_complicated_subexpressions(self, threshold, callback):
-        super().replace_complicated_subexpressions(threshold, callback)
         exprs = []
         for expr in self._exprs:
+            expr.replace_complicated_subexpressions(threshold, callback)
             if expr._complicated(threshold):
                 expr = callback(expr)
             exprs.append(expr)
@@ -244,12 +247,9 @@ class ExprBinary(Expr):
     def children(self):
         return self._left, self._right
 
-    def optimize_children(self):
+    def optimize(self, flags=0):
         self._left = self._left.optimize()
         self._right = self._right.optimize()
-
-    def optimize(self, flags=0):
-        self.optimize_children()
         return self
 
     def rettype(self):
@@ -280,10 +280,8 @@ class ExprLShift(ExprShift):
             return '({} << {})'.format(self._left, right)
 
     def optimize(self, flags=0):
-        self.optimize_children()
-
-        left = self._left
-        right = self._right
+        self._left = left = self._left.optimize()
+        self._right = right = self._right.optimize()
 
         if isinstance(left, ExprConst) and isinstance(right, ExprConst):
             return ExprConst(self.rettype(), left._value << right._value)
@@ -355,21 +353,21 @@ class ExprRShift(ExprShift):
     def optimize(self, flags=0):
         '''
         >>> expr = RShift(Add(Var(U32, 'c'), 30), 2)
-        >>> str(expr.optimize(Expr.optimize_absorb_constant))
+        >>> str(expr.optimize(_OPTIMIZE_ABSORB_CONSTANT))
         '(((c + 2u) >> 2) + 7u)'
         >>> expr = RShift(Add(Var(U32, 'c'), Var(U32, 'd'), -30), 2)
-        >>> str(expr.optimize(Expr.optimize_absorb_constant))
+        >>> str(expr.optimize(_OPTIMIZE_ABSORB_CONSTANT))
         '(((c + d + 2u) >> 2) - 8u)'
         '''
-        self.optimize_children()
-        left = self._left
-        right = self._right
+        self._left = left = self._left.optimize()
+        self._right = right = self._right.optimize()
 
-        if (flags & Expr.optimize_absorb_constant):
+        right_const = isinstance(right, ExprConst)
+
+        if (flags & _OPTIMIZE_ABSORB_CONSTANT):
             # (a + c1) >> c2
             # Convert to ((a + c1 % (1 << c2)) >> c2) + (c1 >> c2).
-            if isinstance(left, ExprAdd) and isinstance(right, ExprConst) and \
-                    left._const:
+            if isinstance(left, ExprAdd) and right_const and left._const:
                 ctype = left._const._type
                 c1 = left._const._value
                 c2 = right._value
@@ -384,7 +382,7 @@ class ExprRShift(ExprShift):
                     return expr.optimize(flags)
 
         # (a >> c1) >> c2 ==> a >> (c1 + c2)
-        if isinstance(right, ExprConst) and \
+        if right_const and \
                 isinstance(left, ExprRShift) and \
                 isinstance(left._right, ExprConst):
             self._right = right = Add(right, left._right).optimize()
@@ -398,10 +396,8 @@ class ExprMul(ExprBinary):
         return '{} * {}'.format(self._left, self._right)
 
     def optimize(self, flags=0):
-        self.optimize_children()
-
-        left = self._left
-        right = self._right
+        self._left = left = self._left.optimize(flags)
+        self._right = right = self._right.optimize(flags)
 
         # Both constants
         if isinstance(left, ExprConst) and isinstance(right, ExprConst):
@@ -449,17 +445,23 @@ class ExprAnd(ExprBinary):
         return '({} & {})'.format(self._left, self._right)
 
     def optimize(self, flags=0):
-        if isinstance(self._right, ExprConst):
-            self._left = left = self._left.optimize(
-                Expr.optimize_absorb_constant)
+        left = self._left
+        right = self._right
+
+        right_const = isinstance(right, ExprConst)
+        right_value = None
+
+        if right_const:
+            self._left = left = left.optimize(_OPTIMIZE_ABSORB_CONSTANT)
+            right_value = right._value
         else:
-            self._left = left = self._left.optimize()
-        self._right = right = self._right.optimize()
+            self._left = left = left.optimize()
+            self._right = right = right.optimize()
 
         # (a + c1) & c2 ==> (a + c1') & c2
         # where c1' = c1 with high bits cleared
         if isinstance(left, ExprAdd) and left._const and \
-                isinstance(right, ExprConst) and right._value != 0:
+                right_const and right_value:
             rv = right._value
             bt = rv.bit_length() + 1
             c1p = left._const._value & ((1 << bt) - 1)
@@ -472,10 +474,9 @@ class ExprAnd(ExprBinary):
         # (a + c) & c ==> (a & c) + c
         # Because the optimized form doesn't take advantage of LEA instruction,
         # we only do this when explicitly requested
-        if (flags & Expr.optimize_absorb_constant) and \
+        if (flags & _OPTIMIZE_ABSORB_CONSTANT) and \
                 isinstance(left, ExprAdd) and left._const and \
-                isinstance(right, ExprConst) and \
-                left._const._value == right._value:
+                right_const and left._const._value == right_value:
             expr = ExprAnd(ExprAdd(left._exprs, None), right)
             expr = ExprAdd(expr, left._const)
             return expr.optimize(flags)
@@ -483,21 +484,21 @@ class ExprAnd(ExprBinary):
         # (a & c1) & c2 ==> a & (c1 & c2)
         if isinstance(left, ExprAnd) and \
                 isinstance(left._right, ExprConst) and \
-                isinstance(right, ExprConst):
+                right_const:
             c1 = left._right._value
-            c2 = right._value
+            c2 = right_value
             expr = ExprAnd(left._left,
                            Const(max(left._right._type, right._type), c1 & c2))
             return expr.optimize(flags)
 
         # (a & 0xff) ==> (uint8_t)a
         # (a & 0xffff) ==> (uint16_t)a
-        if isinstance(right, ExprConst):
+        if right_const:
             # Must cast back
-            if right._value == 0xff:
+            if right_value == 0xff:
                 expr = ExprCast(self.rettype(), ExprCast(U8, left))
                 return expr.optimize(flags)
-            elif right._value == 0xffff:
+            elif right_value == 0xffff:
                 expr = ExprCast(self.rettype(), ExprCast(U16, left))
                 return expr.optimize(flags)
         return self
@@ -515,10 +516,8 @@ class ExprCompare(ExprBinary):
         return I32
 
     def optimize(self, flags=0):
-        self.optimize_children()
-
-        left = self._left
-        right = self._right
+        self._left = left = self._left.optimize()
+        self._right = right = self._right.optimize()
 
         # (a >> c1) == c2
         # a >= (c2 << c1) && a < ((c2 + 1) << c1)
@@ -660,7 +659,7 @@ class ExprTable(Expr):
         return self._var,
 
     def optimize(self, flags=0):
-        self._var = self._var.optimize(flags=Expr.optimize_absorb_constant)
+        self._var = self._var.optimize(flags=_OPTIMIZE_ABSORB_CONSTANT)
         # Absorb constants into offset
         if isinstance(self._var, ExprAdd) and \
                 self._var._const:
