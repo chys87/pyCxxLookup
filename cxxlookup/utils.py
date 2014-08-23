@@ -170,8 +170,19 @@ def gcd_reduce(array):
     '''
     Return the max gcd, such that is_const(v % gcd for v in array)
     '''
-    array = np.unique(array)
+    array = np_unique(array)
     return gcd_many(array[1:] - array[:-1])
+
+
+def np_unique(array):
+    '''np.unique with speedups for uint32_t arrays
+
+    >>> np_unique(np.array([1,3,5,7,1,2,3,4], np.uint32)).tolist()
+    [1, 2, 3, 4, 5, 7]
+    '''
+    if _speedups and array.dtype == np.uint32:
+        return np.fromstring(_speedups.unique(array.tostring()), np.uint32)
+    return np.unique(array)
 
 
 def profiling(func):

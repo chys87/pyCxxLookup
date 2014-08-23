@@ -175,7 +175,8 @@ class MakeCodeForRange:
         # Extract complicated expressions
         # as variables for code readability
         expr.replace_complicated_subexpressions(8, self._make_subexpr)
-        for subexpr in list(self._named_subexprs.values()):
+        # The purpose of the sort is to get deterministic results
+        for _, subexpr in sorted(self._named_subexprs.items()):
             subexpr.replace_complicated_subexpressions(8, self._make_subexpr)
 
         # Final optimization: Remove unnecessary explicit cast
@@ -231,7 +232,7 @@ class MakeCodeForRange:
 
         num = values.size
         hi = lo + num
-        uniqs = np.unique(values)
+        uniqs = utils.np_unique(values)
         uniq = uniqs.size
         maxv = int(uniqs[-1])
         minv = 0
@@ -349,7 +350,7 @@ class MakeCodeForRange:
             reduced_values = values - slope * (
                 lo + np.arange(num, dtype=np.int64))
             # Be careful to avoid infinite recursion
-            reduced_uniqs = np.unique(reduced_values)
+            reduced_uniqs = utils.np_unique(reduced_values)
             if reduced_uniqs.size <= uniq // 2 or \
                     int(reduced_uniqs[-1] - reduced_uniqs[0]).bit_length() <= \
                     maxv_bits // 2:
@@ -458,10 +459,10 @@ class MakeCodeForRange:
             lo_values = values & lomask
             hi_values = values & ~lomask
 
-            lo_uniq = np.unique(lo_values).size
+            lo_uniq = utils.np_unique(lo_values).size
             if lo_uniq < 2:
                 continue
-            hi_uniq = np.unique(hi_values).size
+            hi_uniq = utils.np_unique(hi_values).size
             if hi_uniq < 2:
                 continue
 

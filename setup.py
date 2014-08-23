@@ -36,12 +36,15 @@ import os
 import sys
 
 _ext_modules = [
-    Extension('_speedups', ['cxxlookup/_speedups.c']),
+    Extension('_speedups', ['cxxlookup/_speedups.cpp']),
 ]
 
 if 'linux' in sys.platform:
-    if os.environ.get('CFLAGS'):
-        os.environ['CFLAGS'] = '-O2 -march=native'
+    DEFAULT_CFLAGS = \
+        '-O2 -march=native -fno-exceptions -Wl,--as-needed '\
+        '-fvisibility-inlines-hidden -fvisibility=hidden -flto -std=gnu++11'
+    os.environ.setdefault('CFLAGS', DEFAULT_CFLAGS)
+    os.environ.setdefault('CXXFLAGS', DEFAULT_CFLAGS)
 
 setup(name='cxxlookup',
       version='1.0',
