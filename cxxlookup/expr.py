@@ -85,7 +85,31 @@ def const_type(value):
 _OPTIMIZE_ABSORB_CONSTANT = 1
 
 
-class Expr:
+class ExprMeta(type):
+    """This is for performance purpose.
+
+    Add IS_*** constants to Expr* classes to replace ininstance,
+    which turned out to be one of the bottlenecks of pyCxxLookup
+
+    >>> Expr.IS_CONST, Expr.IS_VAR, Expr.IS_RSHIFT
+    (False, False, False)
+    >>> ExprConst.IS_CONST, ExprConst.IS_VAR, ExprConst.IS_RSHIFT
+    (True, False, False)
+    >>> ExprVar.IS_CONST, ExprVar.IS_VAR, ExprVar.IS_RSHIFT
+    (False, True, False)
+    >>> ExprRShift.IS_CONST, ExprRShift.IS_VAR, ExprRShift.IS_RSHIFT
+    (False, False, True)
+    """
+    def __new__(cls, name, bases, namespace, **kwds):
+        result = type.__new__(cls, name, bases, dict(namespace))
+        if name != 'Expr' and name.startswith('Expr'):
+            is_name = 'IS_' + name[4:].upper()
+            setattr(result, is_name, True)
+            setattr(Expr, is_name, False)
+        return result
+
+
+class Expr(metaclass=ExprMeta):
     def __str__(self):
         raise NotImplementedError
 
@@ -96,28 +120,40 @@ class Expr:
         return ()
 
     def rettype(self):
-        type = max(x.rettype() for x in self.children())
+        type = max([x.rettype() for x in self.children()])
         return max(type, I32)  # C type-promotion rule
 
     def optimize(self, flags=0):
         return self
 
-    def walk(self, type_or_type_tuple=None,
-             isinstance=isinstance):
-        res = []
+    def walk(self):
+        """Recursively visit itself and all children."""
         stk = [self]
         stk_pop = stk.pop
         stk_extend = stk.extend
-        res_append = res.append
         while stk:
             expr = stk_pop()
-            if not type_or_type_tuple or isinstance(expr, type_or_type_tuple):
-                res_append(expr)
+            yield expr
             stk_extend(expr.children())
-        return res
+
+    def walk_var(self):
+        """Shortcut for filter(lambda x: x.IS_VAR, self.walk())
+        """
+        stk = [self]
+        stk_pop = stk.pop
+        stk_extend = stk.extend
+        while stk:
+            expr = stk_pop()
+            if expr.IS_VAR:
+                yield expr
+            stk_extend(expr.children())
 
     def _complicated(self, threshold):
-        return len(self.walk()) >= threshold
+        for expr in self.walk():
+            threshold -= 1
+            if not threshold:
+                return True
+        return False
 
     def replace_complicated_subexpressions(self, threshold, callback):
         for subexpr in self.children():
@@ -177,7 +213,7 @@ class ExprConst(Expr):
 
 class ExprAdd(Expr):
     def __init__(self, exprs, const):
-        assert isinstance(const, (type(None), ExprConst))
+        assert const is None or const.IS_CONST
         self._exprs = tuple(exprs)
         self._const = const
 
@@ -209,11 +245,11 @@ class ExprAdd(Expr):
 
         for expr in self._exprs:
             expr = expr.optimize(flags)
-            if isinstance(expr, ExprAdd):
+            if expr.IS_ADD:
                 exprs.extend(expr._exprs)
                 if expr._const:
                     const_exprs.append(expr._const)
-            elif isinstance(expr, ExprConst):
+            elif expr.IS_CONST:
                 const_exprs.append(expr)
             else:
                 exprs.append(expr)
@@ -272,7 +308,7 @@ class ExprLShift(ExprShift):
     def __str__(self):
         # Avoid the spurious 'u' after the constant
         right = self._right
-        if isinstance(right, ExprConst):
+        if right.IS_CONST:
             if right._value in (1, 2, 3):
                 return '{} * {}'.format(self._left, 1 << right._value)
             return '({} << {})'.format(self._left, right._value)
@@ -283,24 +319,26 @@ class ExprLShift(ExprShift):
         self._left = left = self._left.optimize()
         self._right = right = self._right.optimize()
 
-        if isinstance(left, ExprConst) and isinstance(right, ExprConst):
+        right_const = right.IS_CONST
+
+        if right_const and left.IS_CONST:
             return ExprConst(self.rettype(), left._value << right._value)
 
         # "(a & c1) << c2" ==> (a << c2) & (c1 << c2) (where c2 <= 3)
         # This takes advantage of x86's LEA instruction
-        if isinstance(left, ExprAnd) and \
-                isinstance(left._right, ExprConst) and \
-                isinstance(right, ExprConst) and right._value <= 3:
+        if right_const and right._value <= 3 and \
+                left.IS_AND and \
+                left._right.IS_CONST:
             expr_left = ExprLShift(left._left, right)
             expr_right = ExprConst(left._right._type,
                                    left._right._value << right._value)
             return ExprAnd(expr_left, expr_right).optimize(flags)
 
         # (cond ? c1 : c2) << c3 ==> (cond ? c1 << c3 : c2 << c3)
-        if isinstance(left, ExprCond) and \
-                isinstance(left._exprT, ExprConst) and \
-                isinstance(left._exprF, ExprConst) and \
-                isinstance(right, ExprConst):
+        if right_const and \
+                left.IS_COND and \
+                left._exprT.IS_CONST and \
+                left._exprF.IS_CONST:
             expr = ExprCond(left._cond,
                             ExprLShift(left._exprT, right),
                             ExprLShift(left._exprF, right))
@@ -309,9 +347,9 @@ class ExprLShift(ExprShift):
         # (a >> c1) << c2
         # (a << (c2 - c1)) & ~((1 << c2) - 1)   (c2 > c1)
         # (a >> (c1 - c2)) & ~((1 << c2) - 1)   (c2 <= c1)
-        if isinstance(left, ExprRShift) and \
-                isinstance(left._right, ExprConst) and \
-                isinstance(right, ExprConst):
+        if right_const and \
+                left.IS_RSHIFT and \
+                left._right.IS_CONST:
             c2 = right._value
             c1 = left._right._value
             if c2 > c1:
@@ -325,8 +363,9 @@ class ExprLShift(ExprShift):
             return expr.optimize(flags)
 
         # "(a + c1) << c2" ==> (a << c2) + (c1 << c2)
-        if isinstance(left, ExprAdd) and len(left._exprs) == 1 and \
-                left._const and isinstance(right, ExprConst):
+        if right_const and \
+                left.IS_ADD and len(left._exprs) == 1 and \
+                left._const:
             expr_left = ExprLShift(left._exprs[0], right)
             expr_right = ExprConst(left._const._type,
                                    left._const._value << right._value)
@@ -343,7 +382,7 @@ class ExprRShift(ExprShift):
 
     def __str__(self):
         # Avoid the spurious 'u' after the constant
-        if isinstance(self._right, ExprConst):
+        if self._right.IS_CONST:
             right_s = str(self._right._value)
         else:
             right_s = str(self._right)
@@ -362,12 +401,12 @@ class ExprRShift(ExprShift):
         self._left = left = self._left.optimize()
         self._right = right = self._right.optimize()
 
-        right_const = isinstance(right, ExprConst)
+        right_const = right.IS_CONST
 
         if (flags & _OPTIMIZE_ABSORB_CONSTANT):
             # (a + c1) >> c2
             # Convert to ((a + c1 % (1 << c2)) >> c2) + (c1 >> c2).
-            if isinstance(left, ExprAdd) and right_const and left._const:
+            if right_const and left.IS_ADD and left._const:
                 ctype = left._const._type
                 c1 = left._const._value
                 c2 = right._value
@@ -383,8 +422,8 @@ class ExprRShift(ExprShift):
 
         # (a >> c1) >> c2 ==> a >> (c1 + c2)
         if right_const and \
-                isinstance(left, ExprRShift) and \
-                isinstance(left._right, ExprConst):
+                left.IS_RSHIFT and \
+                left._right.IS_CONST:
             self._right = right = Add(right, left._right).optimize()
             self._left = left = left._left
 
@@ -399,35 +438,38 @@ class ExprMul(ExprBinary):
         self._left = left = self._left.optimize(flags)
         self._right = right = self._right.optimize(flags)
 
+        right_const = right.IS_CONST
+
         # Both constants
-        if isinstance(left, ExprConst) and isinstance(right, ExprConst):
+        if right_const and left.IS_CONST:
             return ExprConst(self.rettype(),
                              left._value * right._value)
 
         # Put constant on the right side
-        if isinstance(left, ExprConst):
+        if not right_const and left.IS_CONST:
             self._left, self._right = left, right = right, left
+            right_const = True
 
         # (a + c1) * c2 ==> (a * c2 + c1 * c2)
-        if isinstance(left, ExprAdd) and len(left._exprs) == 1 and \
-                left._const and \
-                isinstance(right, ExprConst):
+        if right_const and \
+                left.IS_ADD and len(left._exprs) == 1 and \
+                left._const:
             expr_left = ExprMul(left._exprs[0], right)
             expr_right = ExprMul(left._const, right)
             return ExprAdd((expr_left, expr_right), None).optimize(flags)
 
         # (cond ? c1 : c2) * c3 ==> (cond ? c1 * c3 : c2 * c3)
-        if isinstance(left, ExprCond) and \
-                isinstance(left._exprT, ExprConst) and \
-                isinstance(left._exprF, ExprConst) and \
-                isinstance(right, ExprConst):
+        if right_const and \
+                left.IS_COND and \
+                left._exprT.IS_CONST and \
+                left._exprF.IS_CONST:
             expr = ExprCond(left._cond,
                             Mul(left._exprT, right),
                             Mul(left._exprF, right))
             return expr.optimize(flags)
 
         # Strength reduction (* => <<)
-        if isinstance(right, ExprConst):
+        if right_const:
             rv = right._value
             if rv == 0:
                 return ExprConst(U32, 0)
@@ -448,7 +490,7 @@ class ExprAnd(ExprBinary):
         left = self._left
         right = self._right
 
-        right_const = isinstance(right, ExprConst)
+        right_const = right.IS_CONST
         right_value = None
 
         if right_const:
@@ -460,8 +502,8 @@ class ExprAnd(ExprBinary):
 
         # (a + c1) & c2 ==> (a + c1') & c2
         # where c1' = c1 with high bits cleared
-        if isinstance(left, ExprAdd) and left._const and \
-                right_const and right_value:
+        if right_const and right_value and \
+                left.IS_ADD and left._const:
             rv = right._value
             bt = rv.bit_length() + 1
             c1p = left._const._value & ((1 << bt) - 1)
@@ -475,16 +517,16 @@ class ExprAnd(ExprBinary):
         # Because the optimized form doesn't take advantage of LEA instruction,
         # we only do this when explicitly requested
         if (flags & _OPTIMIZE_ABSORB_CONSTANT) and \
-                isinstance(left, ExprAdd) and left._const and \
+                left.IS_ADD and left._const and \
                 right_const and left._const._value == right_value:
             expr = ExprAnd(ExprAdd(left._exprs, None), right)
             expr = ExprAdd(expr, left._const)
             return expr.optimize(flags)
 
         # (a & c1) & c2 ==> a & (c1 & c2)
-        if isinstance(left, ExprAnd) and \
-                isinstance(left._right, ExprConst) and \
-                right_const:
+        if right_const and \
+                left.IS_AND and \
+                left._right.IS_CONST:
             c1 = left._right._value
             c2 = right_value
             expr = ExprAnd(left._left,
@@ -519,14 +561,15 @@ class ExprCompare(ExprBinary):
         self._left = left = self._left.optimize()
         self._right = right = self._right.optimize()
 
+        right_const = right.IS_CONST
+
         # (a >> c1) == c2
         # a >= (c2 << c1) && a < ((c2 + 1) << c1)
         # unsinged(a - (c2 << c1)) < (1 << c1)
-        if self._compare == '==' and \
-                isinstance(left, ExprRShift) and \
+        if right_const and self._compare == '==' and \
+                left.IS_RSHIFT and \
                 left._left.rettype() == U32 and \
-                isinstance(left._right, ExprConst) and \
-                isinstance(right, ExprConst) and \
+                left._right.IS_CONST and \
                 right._type == U32:
             c1 = left._right._value
             c2 = right._value
@@ -537,11 +580,10 @@ class ExprCompare(ExprBinary):
 
         # (a >> c1) < c2
         # a < (c2 << c1)
-        if self._compare == '<' and \
-                isinstance(left, ExprRShift) and \
+        if right_const and self._compare == '<' and \
+                left.IS_RSHIFT and \
                 left._left.rettype() == U32 and \
-                isinstance(left._right, ExprConst) and \
-                isinstance(right, ExprConst) and \
+                left._right.IS_CONST and \
                 right._type == U32:
             c1 = left._right._value
             c2 = right._value
@@ -573,7 +615,7 @@ class ExprCast(Expr):
         if value.rettype() == self._type:
             return value
 
-        if isinstance(value, ExprCast) and self._type <= value._type:
+        if value.IS_CAST and self._type <= value._type:
             return ExprCast(self._type, value._value).optimize(flags=flags)
 
         return self
@@ -661,8 +703,7 @@ class ExprTable(Expr):
     def optimize(self, flags=0):
         self._var = self._var.optimize(flags=_OPTIMIZE_ABSORB_CONSTANT)
         # Absorb constants into offset
-        if isinstance(self._var, ExprAdd) and \
-                self._var._const:
+        if self._var.IS_ADD and self._var._const:
             self._offset -= self._var._const._value
             self._var = ExprAdd(self._var._exprs, None).optimize()
         return self
@@ -700,7 +741,7 @@ def Add(*in_exprs):
 
     for expr in in_exprs:
         expr = exprize(expr)
-        if isinstance(expr, ExprConst):
+        if expr.IS_CONST:
             const_exprs.append(expr)
         else:
             exprs.append(expr)

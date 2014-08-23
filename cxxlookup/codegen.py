@@ -65,7 +65,7 @@ def make_code(base, values, hole, opt):
 
         def add_var_in_expr(expr):
             # Depth-first search
-            for x in expr.walk(ExprVar):
+            for x in expr.walk_var():
                 var_name = x._name
                 if var_name not in added_var_name:
                     var_expr = subexprs[var_name]
@@ -73,8 +73,7 @@ def make_code(base, values, hole, opt):
 
                     var_type = var_expr.rettype()
                     type_name = TypeNames[var_type]
-                    while isinstance(var_expr, ExprCast) and \
-                            var_expr._type >= var_type:
+                    while var_expr.IS_CAST and var_expr._type >= var_type:
                         var_expr = var_expr._value
 
                     subexpr_str.append('\t\t\t{} {} = {};\n'.format(
@@ -156,14 +155,13 @@ class MakeCodeForRange:
         expr = self._make_code(
             self._lo, self._values, self._table_name,
             Var(U32, 'c'), Var(U64, 'cl'))
-        expr = expr.optimize()
 
         # Remove unreachable subexpressions
         reachable = {'c', 'cl'}
         to_visit = [expr]
         while to_visit:
             x = to_visit.pop()
-            for subexpr in x.walk(ExprVar):
+            for subexpr in x.walk_var():
                 if subexpr._name not in reachable:
                     reachable.add(subexpr._name)
                     to_visit.append(self._named_subexprs[subexpr._name])
@@ -180,7 +178,7 @@ class MakeCodeForRange:
             subexpr.replace_complicated_subexpressions(8, self._make_subexpr)
 
         # Final optimization: Remove unnecessary explicit cast
-        while isinstance(expr, ExprCast) and expr._type >= I32:
+        while expr.IS_CAST and expr._type >= I32:
             expr = expr._value
 
         self._expr = expr
@@ -207,9 +205,9 @@ class MakeCodeForRange:
 
     def _make_code(self, lo, values, table_name, inexpr, inexpr_long,
                    addition=0):
-        exprs = self._yield_code(lo, values, table_name, inexpr,
-                                 inexpr_long, addition)
-        exprs = (expr.optimize() for expr in exprs)
+        exprs = [expr.optimize() for expr in
+                 self._yield_code(lo, values, table_name, inexpr,
+                                  inexpr_long, addition)]
         return min(exprs, key=self._overhead)
 
     def _yield_code(self, lo, values, table_name, inexpr, inexpr_long,
@@ -519,31 +517,28 @@ class MakeCodeForRange:
     @staticmethod
     def _very_simple(expr):
         # Var
-        if isinstance(expr, ExprVar):
+        if expr.IS_VAR:
             return True
         # Var + const
-        if isinstance(expr, ExprAdd) and \
+        if expr.IS_ADD and \
                 len(expr._exprs) == 1 and \
-                isinstance(expr._exprs[0], ExprVar) and \
-                isinstance(expr._const, ExprConst):
+                expr._exprs[0].IS_VAR:
             return True
         # Var >> const, Var << const
-        if isinstance(expr, (ExprRShift, ExprLShift)) and \
-                isinstance(expr._left, ExprVar) and \
-                isinstance(expr._right, ExprConst):
+        if expr.IS_SHIFT and \
+                expr._left.IS_VAR and \
+                expr._right.IS_CONST:
             return True
         # (Var - const) >> const
-        if isinstance(expr, ExprRShift) and \
-                isinstance(expr._left, ExprAdd) and \
+        if expr.IS_RSHIFT and \
+                expr._left.IS_ADD and \
                 len(expr._left._exprs) == 1 and \
-                isinstance(expr._left._exprs[0], ExprVar) and \
-                isinstance(expr._right, ExprConst):
+                expr._left._exprs[0].IS_VAR and \
+                expr._right.IS_CONST:
             return True
         return False
 
-    def _overhead(self, expr,
-                  isinstance=isinstance, ExprVar=ExprVar,
-                  ExprTable=ExprTable, ExprCast=ExprCast, ExprCond=ExprCond):
+    def _overhead(self, expr):
         """Estimate the overhead of an expression.
         We use the total number of bytes in tables plus additional overheads
         for each Expr instance.
@@ -557,21 +552,21 @@ class MakeCodeForRange:
             expr = to_scan_list.pop()
 
             for x in expr.walk():
-                extra += 1
-                if isinstance(x, ExprVar):
+                extra += 2
+                if x.IS_VAR:
                     var_name = x._name
                     if var_name not in visited_subexprs:
                         visited_subexprs.add(var_name)
                         to_scan_list.append(self._named_subexprs[var_name])
-                    extra -= 1
-                elif isinstance(x, ExprTable):
+                    extra -= 2
+                elif x.IS_TABLE:
                     total_bytes += x.table_bytes()
-                elif isinstance(x, ExprCast):
-                    extra -= 1
-                elif isinstance(x, ExprCond):
-                    extra += .5
+                elif x.IS_CAST:
+                    extra -= 2
+                elif x.IS_COND:
+                    extra += 1
 
-        return total_bytes + extra * self._opt.overhead_multiply
+        return total_bytes + extra * self._opt.overhead_multiply // 2
 
 
 WRAP_TEMPLATE = string.Template(r'''namespace {
