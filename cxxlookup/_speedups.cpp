@@ -30,6 +30,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #define PY_SSIZE_T_CLEAN
 #include <algorithm>
+#include <memory>
+#include <type_traits>
 #include <Python.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -99,6 +101,57 @@ size_t do_unique(uint32_t *out, const uint32_t *in, size_t n) {
 	return std::unique(out, po) - out;
 }
 
+template <typename T>
+std::pair<T, size_t> do_mode_cnt(const T *p, size_t n) {
+
+	static_assert(std::is_unsigned<T>::value, "Unsigned integer type only.");
+
+	struct Item {
+		T v;
+		ssize_t cnt;
+	};
+
+	size_t table_size = n * 2;
+	if (sizeof(size_t) > 32)
+		table_size |= table_size >> 32;
+	table_size |= table_size >> 16;
+	table_size |= table_size >> 8;
+	table_size |= table_size >> 4;
+	table_size |= table_size >> 2;
+	table_size |= table_size >> 1;
+
+	T N = table_size;
+
+	std::unique_ptr<Item[]> item(new Item[N]);
+	memset(&item[0], -1, N * sizeof(Item));
+
+	uint32_t maxval = 0;
+	size_t maxcnt = 0;
+
+	for (size_t k = n; k; --k) {
+		T v = *p++;
+		T h = v % N;
+
+		while (item[h].cnt >= 0 && item[h].v != v) {
+			++h;
+			if (h >= N)
+				h = 0;
+		}
+		if (item[h].cnt >= 0) {
+			item[h].cnt++;
+		} else {
+			item[h].v = v;
+			item[h].cnt = 1;
+		}
+		if (item[h].cnt > maxcnt) {
+			maxcnt = item[h].cnt;
+			maxval = v;
+		}
+	}
+
+	return std::make_pair(maxval, maxcnt);
+}
+
 // _speedups.gcd_many(array.tostring())
 PyObject *gcd_many(PyObject *self, PyObject *args) {
 	Py_buffer buf;
@@ -134,11 +187,36 @@ PyObject *unique(PyObject *self, PyObject *args) {
 	return res;
 }
 
+// _speedups.unique(array.tostring())
+PyObject *mode_cnt(PyObject *self, PyObject *args) {
+	Py_buffer buf;
+	Py_ssize_t n;
+	if (!PyArg_ParseTuple(args, "y*n", &buf, &n))
+		return NULL;
+
+	if (n == 0)
+		Py_RETURN_NONE;
+
+	const uint32_t *p = (const uint32_t *)buf.buf;
+
+	if (buf.len == n * 4) {
+		auto res = do_mode_cnt(reinterpret_cast<const uint32_t *>(buf.buf), n);
+		return Py_BuildValue("(In)", unsigned(res.first), Py_ssize_t(res.second));
+	} else if (buf.len == n * 8) {
+		auto res = do_mode_cnt(reinterpret_cast<const uint64_t *>(buf.buf), n);
+		return Py_BuildValue("(Ln)", static_cast<PY_LONG_LONG>(int64_t(res.first)), Py_ssize_t(res.second));
+	} else {
+		Py_RETURN_NONE;
+	}
+}
+
 PyMethodDef speedups_methods[] = {
 	{"gcd_many",  &gcd_many, METH_VARARGS,
 		"Calculate greatest common divisor (GCD) of a uint32_t array"},
 	{"unique", &unique, METH_VARARGS,
 		"Accelerated version of np.unique for uint32_t arrays"},
+	{"mode_cnt", &mode_cnt, METH_VARARGS,
+		"Compute mode and its corresponding count for uint32_t/int64_t arrays"},
 	{NULL, NULL, 0, NULL}
 };
 

@@ -48,12 +48,21 @@ def make_numpy_array(values):
 
 def most_common_element(arr):
     """Return the most common element of a numpy array"""
+    if _speedups and arr.dtype in (np.uint32, np.int64):
+        return _speedups.mode_cnt(arr.tostring(), arr.size)[0]
     u, indices = np.unique(arr, return_inverse=True)
     return u[np.argmax(np.bincount(indices))]
 
 
 def most_common_element_count(arr):
-    """Return the most common element of a numpy array and its count"""
+    """Return the most common element of a numpy array and its count
+    >>> most_common_element_count(np.array([1,3,5,0,5,1,5], np.uint32))
+    (5, 3)
+    >>> most_common_element_count(np.array([1,3,5,0,5,1,5], np.int64))
+    (5, 3)
+    """
+    if _speedups and arr.dtype in (np.uint32, np.int64):
+        return _speedups.mode_cnt(arr.tostring(), arr.size)
     u, indices = np.unique(arr, return_inverse=True)
     bincnt = np.bincount(indices)
     i = np.argmax(bincnt)
