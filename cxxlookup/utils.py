@@ -46,10 +46,20 @@ def make_numpy_array(values):
     return np.array(values, dtype=np.uint32)
 
 
+def _array_for_speedups(arr):
+    dtype = arr.dtype
+    bits = dtype.itemsize * 8
+    if np.issubdtype(dtype, np.signedinteger):
+        bits -= 1
+    return (arr.tostring(), bits)
+
+
 def most_common_element(arr):
     """Return the most common element of a numpy array"""
-    if _speedups and arr.dtype in (np.uint32, np.int64):
-        return _speedups.mode_cnt(arr.tostring(), arr.size)[0]
+    if _speedups:
+        res = _speedups.mode_cnt(_array_for_speedups(arr))
+        if res is not None:
+            return res[0]
     u, indices = np.unique(arr, return_inverse=True)
     return u[np.argmax(np.bincount(indices))]
 
@@ -61,8 +71,10 @@ def most_common_element_count(arr):
     >>> most_common_element_count(np.array([1,3,5,0,5,1,5], np.int64))
     (5, 3)
     """
-    if _speedups and arr.dtype in (np.uint32, np.int64):
-        return _speedups.mode_cnt(arr.tostring(), arr.size)
+    if _speedups:
+        res = _speedups.mode_cnt(_array_for_speedups(arr))
+        if res is not None:
+            return res
     u, indices = np.unique(arr, return_inverse=True)
     bincnt = np.bincount(indices)
     i = np.argmax(bincnt)
@@ -184,13 +196,17 @@ def gcd_reduce(array):
 
 
 def np_unique(array):
-    '''np.unique with speedups for uint32_t arrays
+    '''np.unique with speedups for certain types
 
     >>> np_unique(np.array([1,3,5,7,1,2,3,4], np.uint32)).tolist()
     [1, 2, 3, 4, 5, 7]
+    >>> np_unique(np.array([1,3,5,7,1,2,3,4], np.int64)).tolist()
+    [1, 2, 3, 4, 5, 7]
     '''
-    if _speedups and array.dtype == np.uint32:
-        return np.fromstring(_speedups.unique(array.tostring()), np.uint32)
+    if _speedups:
+        res = _speedups.unique(_array_for_speedups(array))
+        if res is not None:
+            return np.fromstring(res, array.dtype)
     return np.unique(array)
 
 

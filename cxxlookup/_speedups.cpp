@@ -59,29 +59,22 @@ uint32_t do_gcd_many(const uint32_t *p, size_t n) {
 	return res;
 }
 
-int compare_uint32(const void *a, const void *b) {
-	uint32_t A = *(const uint32_t *)a;
-	uint32_t B = *(const uint32_t *)b;
-	if (A < B)
-		return -1;
-	else if (A == B)
-		return 0;
-	else
-		return 1;
-}
+template <typename T>
+size_t do_unique(T *out, const T *in, size_t n) {
 
-size_t do_unique(uint32_t *out, const uint32_t *in, size_t n) {
-	uint32_t *po = out;
+	typedef typename std::make_unsigned<T>::type UT;
+
+	T *po = out;
 	if (n >= 64) {
 		// Let's try to eliminate some (but not all) duplicates with
 		// some simple tricks
 		uint64_t hashtable_valid = 0;
-		constexpr uint32_t HASHTABLE_SIZE = 61;
-		uint32_t hashtable[HASHTABLE_SIZE];
+		constexpr T HASHTABLE_SIZE = 61;
+		T hashtable[HASHTABLE_SIZE];
 
 		for (size_t k = n; k; --k) {
-			uint32_t v = *in++;
-			uint32_t h = v % HASHTABLE_SIZE;
+			T v = *in++;
+			size_t h = UT(v) % HASHTABLE_SIZE;
 			if (!(hashtable_valid & (1ull << h))) {
 				hashtable_valid |= 1ull << h;
 				hashtable[h] = v;
@@ -92,7 +85,7 @@ size_t do_unique(uint32_t *out, const uint32_t *in, size_t n) {
 			}
 		}
 	} else {
-		memcpy(out, in, n * sizeof(uint32_t));
+		memcpy(out, in, n * sizeof(T));
 		po = out + n;
 	}
 
@@ -143,7 +136,7 @@ std::pair<T, size_t> do_mode_cnt(const T *p, size_t n) {
 			item[h].v = v;
 			item[h].cnt = 1;
 		}
-		if (item[h].cnt > maxcnt) {
+		if (size_t(item[h].cnt) > maxcnt) {
 			maxcnt = item[h].cnt;
 			maxval = v;
 		}
@@ -164,45 +157,47 @@ PyObject *gcd_many(PyObject *self, PyObject *args) {
 	return PyLong_FromLong(do_gcd_many(p, (size_t)len / 4));
 }
 
-// np.fromstring(_speedups.unique(array.tostring()))
+// np.fromstring(utils._array_for_speedups(array))
 PyObject *unique(PyObject *self, PyObject *args) {
 	Py_buffer buf;
-	if (!PyArg_ParseTuple(args, "y*", &buf))
+	int type;
+	if (!PyArg_ParseTuple(args, "(y*i)", &buf, &type))
 		return NULL;
 
-	const uint32_t *p = (const uint32_t *)buf.buf;
-	size_t n = (size_t)buf.len / 4;
+	size_t bytes = buf.len;
 
-	if (n == 0)
-		return PyBytes_FromStringAndSize("", 0);
-
-	uint32_t *out = (uint32_t *)malloc(n * sizeof(uint32_t));
-	if (out == NULL)
-		return PyErr_NoMemory();
-
-	n = do_unique(out, p, n);
-
-	PyObject *res = PyBytes_FromStringAndSize((const char *)out, n * sizeof(uint32_t));
-	free(out);
-	return res;
+	if (type == 32) {
+		// uint32
+		size_t n = bytes / 4;
+		std::unique_ptr<uint32_t[]> out(new uint32_t[n]);
+		n = do_unique(out.get(), reinterpret_cast<const uint32_t *>(buf.buf), n);
+		return PyBytes_FromStringAndSize((const char *)out.get(), n * sizeof(uint32_t));
+	} else if (type == 63) {
+		// int64
+		size_t n = bytes / 8;
+		std::unique_ptr<int64_t[]> out(new int64_t[n]);
+		n = do_unique(out.get(), reinterpret_cast<const int64_t *>(buf.buf), n);
+		return PyBytes_FromStringAndSize((const char *)out.get(), n * sizeof(int64_t));
+	} else {
+		Py_RETURN_NONE;
+	}
 }
 
-// _speedups.unique(array.tostring())
+// _speedups.unique(utils._array_for_speedups(array))
 PyObject *mode_cnt(PyObject *self, PyObject *args) {
 	Py_buffer buf;
-	Py_ssize_t n;
-	if (!PyArg_ParseTuple(args, "y*n", &buf, &n))
+	int type;
+	if (!PyArg_ParseTuple(args, "(y*i)", &buf, &type))
 		return NULL;
 
-	if (n == 0)
-		Py_RETURN_NONE;
+	size_t bytes = buf.len;
 
-	const uint32_t *p = (const uint32_t *)buf.buf;
-
-	if (buf.len == n * 4) {
+	if (type == 32 && bytes >= 4) {
+		size_t n = bytes / 4;
 		auto res = do_mode_cnt(reinterpret_cast<const uint32_t *>(buf.buf), n);
 		return Py_BuildValue("(In)", unsigned(res.first), Py_ssize_t(res.second));
-	} else if (buf.len == n * 8) {
+	} else if (type == 63 && bytes >= 8) {
+		size_t n = bytes / 8;
 		auto res = do_mode_cnt(reinterpret_cast<const uint64_t *>(buf.buf), n);
 		return Py_BuildValue("(Ln)", static_cast<PY_LONG_LONG>(int64_t(res.first)), Py_ssize_t(res.second));
 	} else {
@@ -214,7 +209,7 @@ PyMethodDef speedups_methods[] = {
 	{"gcd_many",  &gcd_many, METH_VARARGS,
 		"Calculate greatest common divisor (GCD) of a uint32_t array"},
 	{"unique", &unique, METH_VARARGS,
-		"Accelerated version of np.unique for uint32_t arrays"},
+		"Accelerated version of np.unique for uint32_t/int64_t arrays"},
 	{"mode_cnt", &mode_cnt, METH_VARARGS,
 		"Compute mode and its corresponding count for uint32_t/int64_t arrays"},
 	{NULL, NULL, 0, NULL}
