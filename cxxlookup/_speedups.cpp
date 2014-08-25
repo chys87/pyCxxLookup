@@ -30,6 +30,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #define PY_SSIZE_T_CLEAN
 #include <algorithm>
+#include <map>
 #include <memory>
 #include <type_traits>
 #include <assert.h>
@@ -97,61 +98,17 @@ size_t do_unique(T *out, const T *in, size_t n) {
 
 template <typename T>
 std::pair<T, size_t> do_mode_cnt(const T *p, size_t n) {
-
-	static_assert(std::is_unsigned<T>::value, "Unsigned integer type only.");
-
-	struct Item {
-		T v;
-		ssize_t cnt;
-	};
-
-	size_t table_size = n + n / 2;
-	if (sizeof(size_t) > 4)
-		table_size |= table_size >> 32;
-	table_size |= table_size >> 16;
-	table_size |= table_size >> 8;
-	table_size |= table_size >> 4;
-	table_size |= table_size >> 2;
-	table_size |= table_size >> 1;
-
-	T N = table_size;
-
-	std::unique_ptr<T[]> ht_value(new T[N]);
-	std::unique_ptr<size_t[]> ht_cnt(new size_t[N]);
-	std::unique_ptr<bool[]> ht_valid(new bool[N]);
-	memset(&ht_valid[0], 0, N * sizeof(bool));
-
+	std::map<T, size_t> cntmap;
 	uint32_t maxval = 0;
 	size_t maxcnt = 0;
-
 	for (size_t k = n; k; --k) {
 		T v = *p++;
-		T h = v % N;
-		T real_h = h;
-
-		while (ht_valid[h] && ht_value[h] != v) {
-			++h;
-			if (h >= N)
-				h = 0;
-		}
-		if (ht_valid[h]) {
-			ht_cnt[h]++;
-		} else {
-			ht_value[h] = v;
-			ht_valid[h] = true;
-			ht_cnt[h] = 1;
-		}
-		if (ht_cnt[h] > maxcnt) {
-			maxcnt = ht_cnt[h];
+		size_t cnt = ++cntmap[v];
+		if (cnt > maxcnt) {
+			maxcnt = cnt;
 			maxval = v;
-			if (real_h != h) {
-				std::swap(ht_value[real_h], ht_value[h]);
-				std::swap(ht_valid[real_h], ht_valid[h]);
-				std::swap(ht_cnt[real_h], ht_cnt[h]);
-			}
 		}
 	}
-
 	return std::make_pair(maxval, maxcnt);
 }
 
