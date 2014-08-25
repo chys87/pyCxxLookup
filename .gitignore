@@ -3,3 +3,5 @@ Session.vim
 .*.swp
 *~
 /build/
+/GNUmakefile
+/Makefile
