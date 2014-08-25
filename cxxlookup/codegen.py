@@ -222,7 +222,7 @@ class MakeCodeForRange:
         if values.dtype != np.uint32:
             values = np.array(values, np.uint32)
 
-        minv = int(values.min())
+        minv = utils.np_min(values)
         if minv != 0:
             values = values - minv
             addition += minv
@@ -352,7 +352,7 @@ class MakeCodeForRange:
             if reduced_uniqs.size <= uniq // 2 or \
                     int(reduced_uniqs[-1] - reduced_uniqs[0]).bit_length() <= \
                     maxv_bits // 2:
-                offset = int(reduced_values.min())
+                offset = utils.np_min(reduced_values)
                 # Negative values may cause problems
                 reduced_values -= offset
                 reduced_values = np.array(reduced_values, np.uint32)
@@ -480,7 +480,7 @@ class MakeCodeForRange:
             elif min(lo_uniq, hi_uniq) <= min(1 << (k - 1), uniq // 2):
                 pass
 
-            elif int(hi_values.max() - hi_values.min()).bit_length() <= k // 2:
+            elif utils.np_range(hi_values).bit_length() <= k // 2:
                 pass
 
             else:

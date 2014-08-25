@@ -648,7 +648,8 @@ class ExprTable(Expr):
     def __init__(self, name, values, var, offset):
         self._name = name
         self._values = values
-        self._type = const_type(values.max())
+        self._max_value = utils.np_max(values)
+        self._type = const_type(self._max_value)
         self._var = var
         self._offset = offset
 
@@ -675,7 +676,7 @@ class ExprTable(Expr):
         res_append = res.append
 
         indlen = len(hex(self._values.size))
-        maxlen = len(hex(self._values.max()))
+        maxlen = len(hex(self._max_value))
 
         # I understand this is not the "correct" way to go, but this is
         # for performance.

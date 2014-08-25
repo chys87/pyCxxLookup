@@ -104,7 +104,7 @@ def _refine_groups(group, hole, opt):
                 continue
 
             right = values[l:]
-            if right.max() - right.min() >= threshold:
+            if utils.np_range(right) >= threshold:
                 continue
 
             group[lo + l] = right

@@ -32,6 +32,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <algorithm>
 #include <memory>
 #include <type_traits>
+#include <assert.h>
 #include <Python.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -154,6 +155,35 @@ std::pair<T, size_t> do_mode_cnt(const T *p, size_t n) {
 	return std::make_pair(maxval, maxcnt);
 }
 
+template <int mode, typename T>
+T do_min_max(const T *p, size_t n) {
+	assert(n > 0);
+
+	if (mode == 0) {
+		T m = p[0];
+		for (size_t i = 1; i < n; ++i)
+			if (p[i] < m)
+				m = p[i];
+		return m;
+	} else if (mode == 1) {
+		T M = p[0];
+		for (size_t i = 1; i < n; ++i)
+			if (p[i] > M)
+				M = p[i];
+		return M;
+	} else {
+		T m = p[0];
+		T M = p[0];
+		for (size_t i = 1; i < n; ++i) {
+			if (p[i] < m)
+				m = p[i];
+			if (p[i] > M)
+				M = p[i];
+		}
+		return M - m;
+	}
+}
+
 // _speedups.gcd_many(array.tostring())
 PyObject *gcd_many(PyObject *self, PyObject *args) {
 	Py_buffer buf;
@@ -214,6 +244,43 @@ PyObject *mode_cnt(PyObject *self, PyObject *args) {
 	}
 }
 
+template <int mode>
+PyObject *min_max_mode(const void *ptr, size_t bytes, int type) {
+	if (type == 32 && bytes >= 4) {
+		const uint32_t *p = static_cast<const uint32_t *>(ptr);
+		size_t n = bytes / 4;
+		return PyLong_FromLong(do_min_max<mode>(p, n));
+	} else if (type == 63 && bytes >= 8) {
+		const int64_t *p = static_cast<const int64_t *>(ptr);
+		size_t n = bytes / 8;
+		return PyLong_FromLongLong(do_min_max<mode>(p, n));
+	} else {
+		Py_RETURN_NONE;
+	}
+}
+
+PyObject *min_max(PyObject *self, PyObject *args) {
+	Py_buffer buf;
+	int type;
+	int mode;
+	if (!PyArg_ParseTuple(args, "(y*i)i", &buf, &type, &mode))
+		return NULL;
+
+	const void *ptr = buf.buf;
+	size_t bytes = buf.len;
+
+	switch (uint32_t(mode)) {
+		case 0:
+			return min_max_mode<0>(ptr, bytes, type);
+		case 1:
+			return min_max_mode<1>(ptr, bytes, type);
+		case 2:
+			return min_max_mode<2>(ptr, bytes, type);
+		default:
+			Py_RETURN_NONE;
+	}
+}
+
 PyMethodDef speedups_methods[] = {
 	{"gcd_many",  &gcd_many, METH_VARARGS,
 		"Calculate greatest common divisor (GCD) of a uint32_t array"},
@@ -221,6 +288,8 @@ PyMethodDef speedups_methods[] = {
 		"Accelerated version of np.unique for uint32_t/int64_t arrays"},
 	{"mode_cnt", &mode_cnt, METH_VARARGS,
 		"Compute mode and its corresponding count for uint32_t/int64_t arrays"},
+	{"min_max", &min_max, METH_VARARGS,
+		"Compute min/max of an array"},
 	{NULL, NULL, 0, NULL}
 };
 

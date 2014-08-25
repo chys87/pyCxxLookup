@@ -104,10 +104,6 @@ def const_range(array):
     return k
 
 
-def array_range(array):
-    return int(array.max() - array.min())
-
-
 def range_limit(array, threshold):
     '''
     Return the max k, such that max(array[:k]) - min(array[:k]) < threshold
@@ -208,6 +204,42 @@ def np_unique(array):
         if res is not None:
             return np.fromstring(res, array.dtype)
     return np.unique(array)
+
+
+def np_min(array):
+    '''
+    >>> np_min(np.array([3,2,1,2,3], np.uint32))
+    1
+    '''
+    if _speedups:
+        res = _speedups.min_max(_array_for_speedups(array), 0)
+        if res is not None:
+            return res
+    return int(array.min())
+
+
+def np_max(array):
+    '''
+    >>> np_max(np.array([3,2,1,2,3], np.uint32))
+    3
+    '''
+    if _speedups:
+        res = _speedups.min_max(_array_for_speedups(array), 1)
+        if res is not None:
+            return res
+    return int(array.max())
+
+
+def np_range(array):
+    '''
+    >>> np_range(np.array([3,2,1,2,3], np.uint32))
+    2
+    '''
+    if _speedups:
+        res = _speedups.min_max(_array_for_speedups(array), 2)
+        if res is not None:
+            return res
+    return int(array.max()) - int(array.min())
 
 
 def profiling(func):
