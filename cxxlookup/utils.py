@@ -264,9 +264,9 @@ def profiling(func):
             pr.disable()
             ps = pstats.Stats(pr, stream=sys.stderr)
             ps.sort_stats('cumulative', 'stdname')
-            ps.print_stats(20)
+            ps.print_stats(30)
 
             ps.sort_stats('tottime', 'stdname')
-            ps.print_stats(20)
+            ps.print_stats(30)
 
     return _func
