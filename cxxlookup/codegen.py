@@ -352,7 +352,7 @@ class MakeCodeForRange:
             if reduced_uniqs.size <= uniq // 2 or \
                     int(reduced_uniqs[-1] - reduced_uniqs[0]).bit_length() <= \
                     maxv_bits // 2:
-                offset = utils.np_min(reduced_values)
+                offset = int(reduced_uniqs[0])  # utils.np_min(reduced_values)
                 # Negative values may cause problems
                 reduced_values -= offset
                 reduced_values = np.array(reduced_values, np.uint32)
