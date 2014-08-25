@@ -1,0 +1,18 @@
+# Symlink this file to .. if you need it
+
+.PHONY: all clean install build test
+
+all: build
+
+clean:
+	python3 setup.py clean
+	rm -rf build
+
+build:
+	python3 setup.py build
+
+install:
+	python3 setup.py install --user
+
+test:
+	tests/tests.py
