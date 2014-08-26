@@ -67,28 +67,20 @@ size_t do_unique(T *out, const T *in, size_t n) {
 	typedef typename std::make_unsigned<T>::type UT;
 
 	T *po = out;
-	if (n >= 64) {
+	{
 		// Let's try to eliminate some (but not all) duplicates with
 		// some simple tricks
-		uint64_t hashtable_valid = 0;
-		constexpr T HASHTABLE_SIZE = 61;
-		T hashtable[HASHTABLE_SIZE];
+		constexpr uint32_t HASHTABLE_SIZE = 61;
+		T hashtable[HASHTABLE_SIZE] = {1, 0};
 
 		for (size_t k = n; k; --k) {
 			T v = *in++;
 			size_t h = UT(v) % HASHTABLE_SIZE;
-			if (!(hashtable_valid & (1ull << h))) {
-				hashtable_valid |= 1ull << h;
-				hashtable[h] = v;
-				*po++ = v;
-			} else if (hashtable[h] != v) {
+			if (hashtable[h] != v) {
 				hashtable[h] = v;
 				*po++ = v;
 			}
 		}
-	} else {
-		memcpy(out, in, n * sizeof(T));
-		po = out + n;
 	}
 
 	std::sort(out, po);
