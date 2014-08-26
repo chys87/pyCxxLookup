@@ -220,7 +220,7 @@ def np_min(array):
     1
     '''
     if _speedups:
-        res = _speedups.min_max(_array_for_speedups(array), 0)
+        res = _speedups.min_max(array, 0)
         if res is not None:
             return res
     return int(array.min())
@@ -232,7 +232,7 @@ def np_max(array):
     3
     '''
     if _speedups:
-        res = _speedups.min_max(_array_for_speedups(array), 1)
+        res = _speedups.min_max(array, 1)
         if res is not None:
             return res
     return int(array.max())
@@ -244,7 +244,7 @@ def np_range(array):
     2
     '''
     if _speedups:
-        res = _speedups.min_max(_array_for_speedups(array), 2)
+        res = _speedups.min_max(array, 2)
         if res is not None:
             return res
     return int(array.max()) - int(array.min())

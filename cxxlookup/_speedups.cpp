@@ -167,29 +167,33 @@ std::pair<T, size_t> do_mode_cnt(const NumpyVectorView<T> &data) {
 }
 
 template <int mode, typename T>
-T do_min_max(const T *p, size_t n) {
-	assert(n > 0);
+T do_min_max(const NumpyVectorView<T> &data) {
+	auto it = data.begin();
+	auto end = data.end();
+
+	assert (it != end);
 
 	if (mode == 0) {
-		T m = p[0];
-		for (size_t i = 1; i < n; ++i)
-			if (p[i] < m)
-				m = p[i];
+		T m = *it;
+		while (++it != end)
+			if (*it < m)
+				m = *it;
 		return m;
 	} else if (mode == 1) {
-		T M = p[0];
-		for (size_t i = 1; i < n; ++i)
-			if (p[i] > M)
-				M = p[i];
+		T M = *it;
+		while (++it != end)
+			if (*it > M)
+				M = *it;
 		return M;
 	} else {
-		T m = p[0];
-		T M = p[0];
-		for (size_t i = 1; i < n; ++i) {
-			if (p[i] < m)
-				m = p[i];
-			if (p[i] > M)
-				M = p[i];
+		T m = *it;
+		T M = *it;
+		while (++it != end) {
+			T v = *it;
+			if (v < m)
+				m = v;
+			if (v > M)
+				M = v;
 		}
 		return M - m;
 	}
@@ -261,37 +265,35 @@ PyObject *mode_cnt(PyObject *self, PyObject *args) {
 }
 
 template <int mode>
-PyObject *min_max_mode(const void *ptr, size_t bytes, int type) {
-	if (type == 32 && bytes >= 4) {
-		const uint32_t *p = static_cast<const uint32_t *>(ptr);
-		size_t n = bytes / 4;
-		return PyLong_FromLong(do_min_max<mode>(p, n));
-	} else if (type == 63 && bytes >= 8) {
-		const int64_t *p = static_cast<const int64_t *>(ptr);
-		size_t n = bytes / 8;
-		return PyLong_FromLongLong(do_min_max<mode>(p, n));
-	} else {
-		Py_RETURN_NONE;
+PyObject *min_max_mode(PyArrayObject *array) {
+	switch (PyArray_TYPE(array)) {
+		case NPY_UINT32:
+			return PyLong_FromLong(do_min_max<mode>(NumpyVectorView<uint32_t>(array)));
+		case NPY_INT64:
+			return PyLong_FromLongLong(do_min_max<mode>(NumpyVectorView<int64_t>(array)));
+		default:
+			Py_RETURN_NONE;
 	}
 }
 
 PyObject *min_max(PyObject *self, PyObject *args) {
-	Py_buffer buf;
-	int type;
+	PyArrayObject *array;
 	int mode;
-	if (!PyArg_ParseTuple(args, "(y*i)i", &buf, &type, &mode))
+	if (!PyArg_ParseTuple(args, "O!i", &PyArray_Type, &array, &mode))
 		return NULL;
 
-	const void *ptr = buf.buf;
-	size_t bytes = buf.len;
+	if (PyArray_NDIM(array) != 1)
+		Py_RETURN_NONE;
+	if (PyArray_DIMS(array)[0] == 0)
+		Py_RETURN_NONE;
 
 	switch (uint32_t(mode)) {
 		case 0:
-			return min_max_mode<0>(ptr, bytes, type);
+			return min_max_mode<0>(array);
 		case 1:
-			return min_max_mode<1>(ptr, bytes, type);
+			return min_max_mode<1>(array);
 		case 2:
-			return min_max_mode<2>(ptr, bytes, type);
+			return min_max_mode<2>(array);
 		default:
 			Py_RETURN_NONE;
 	}
