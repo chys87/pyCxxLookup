@@ -239,8 +239,11 @@ class MakeCodeForRange:
 
         assert(uniq > 0)
 
-        inexpr = inexpr.optimize()
-        inexpr_long = inexpr_long.optimize()
+        if inexpr is inexpr_long:
+            inexpr = inexpr_long = inexpr.optimize()
+        else:
+            inexpr = inexpr.optimize()
+            inexpr_long = inexpr_long.optimize()
 
         # Constant
         if uniq == 1:
@@ -393,9 +396,10 @@ class MakeCodeForRange:
 
             expr = Add(subexpr, -lo)
             # (table[expr/2] >> (expr%2*4)) & 15
+            expr_shift = RShift(expr, 1)
             expr_left = self._make_code(0, compressed_values,
                                         table_name + '_4bits',
-                                        RShift(expr, 1), RShift(expr, 1))
+                                        expr_shift, expr_shift)
             expr_right = LShift(And(expr, 1), 2)
             expr = And(RShift(expr_left, expr_right), 15)
             expr = Add(expr, addition - offset)
@@ -412,9 +416,10 @@ class MakeCodeForRange:
 
             expr = Add(subexpr, -lo)
             # (table[expr/4] >> (expr%4*2)) & 3
+            expr_shift = RShift(expr, 2)
             expr_left = self._make_code(0, compressed_values,
                                         table_name + '_2bits',
-                                        RShift(expr, 2), RShift(expr, 2))
+                                        expr_shift, expr_shift)
             expr_right = LShift(And(expr, 3), 1)
             expr = And(RShift(expr_left, expr_right), 3)
             expr = Add(expr, addition)
@@ -430,9 +435,10 @@ class MakeCodeForRange:
 
             expr = Add(subexpr, -lo)
             # (table[expr/8] >> (expr%8)) & 1
+            expr_shift = RShift(expr, 3)
             expr_left = self._make_code(0, compressed_values,
                                         table_name + '_bitvec',
-                                        RShift(expr, 3), RShift(expr, 3))
+                                        expr_shift, expr_shift)
             expr_right = And(expr, 7)
             expr = And(RShift(expr_left, expr_right), 1)
             expr = Add(expr, addition)
