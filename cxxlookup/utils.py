@@ -53,7 +53,7 @@ def most_common_element(arr):
         if res is not None:
             return res[0]
     u, indices = np.unique(arr, return_inverse=True)
-    return u[np.argmax(np.bincount(indices))]
+    return int(u[np.argmax(np.bincount(indices))])
 
 
 def most_common_element_count(arr):
@@ -70,7 +70,7 @@ def most_common_element_count(arr):
     u, indices = np.unique(arr, return_inverse=True)
     bincnt = np.bincount(indices)
     i = np.argmax(bincnt)
-    return u[i], bincnt[i]
+    return int(u[i]), int(bincnt[i])
 
 
 def is_const(array):

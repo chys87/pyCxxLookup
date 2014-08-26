@@ -252,14 +252,14 @@ class MakeCodeForRange:
 
         # [0,1] => [c1,c2]. Better to use ExprCond than linear
         if (lo == 0) and (num == 2):
-            c0, c1 = values + addition
+            c0, c1 = map(int, values + addition)
             if c1 == c0 + 1:
                 if c0 == 0:
                     yield inexpr
                 else:
                     yield Add(inexpr, Const(U32, c0))
             elif c0 == 0 and (c1 & (c1 - 1)) == 0:
-                yield LShift(inexpr, Const(U32, int(c1).bit_length() - 1))
+                yield LShift(inexpr, Const(U32, c1.bit_length() - 1))
             else:
                 yield Cond(inexpr, c1, c0)
             return
@@ -268,7 +268,13 @@ class MakeCodeForRange:
         if (uniq == num) and utils.is_linear(values):
             slope = int(values[1]) - int(values[0])
             # (c - lo) * slope + addition
-            yield Add(Mul(Add(inexpr, -lo), slope), int(values[0]) + addition)
+            expr = Add(inexpr, -lo)
+            if slope != 1:
+                expr = Mul(expr, slope)
+            add = int(values[0]) + addition
+            if add:
+                expr = Add(expr, add)
+            yield expr
             return
 
         # Not linear, but only two distinct values.
@@ -345,9 +351,9 @@ class MakeCodeForRange:
             return
 
         # Most elements are almost linear, but a few outliers exist.
-        slope, slope_count = map(int, utils.most_common_element_count(
-            np.array(values[1:], np.int64) - np.array(values[:-1], np.int64)))
-        if slope and slope_count >= num // 2:
+        slope, slope_count = utils.most_common_element_count(
+            np.array(values[1:], np.int64) - np.array(values[:-1], np.int64))
+        if slope and slope_count * 2 >= num:
             reduced_values = values - slope * (
                 lo + np.arange(num, dtype=np.int64))
             # Be careful to avoid infinite recursion
@@ -505,10 +511,12 @@ class MakeCodeForRange:
             yield Add(lo_expr, Mul(hi_expr, hi_gcd))
 
         # Finally fall back to the simplest one-level table
-        if addition > 0 and const_type(maxv) == const_type(maxv + addition):
-            expr = Table(table_name, values + addition, inexpr_long, lo)
+        table_type = const_type(maxv)
+        if addition > 0 and table_type == const_type(maxv + addition):
+            expr = Table(table_type, table_name, values + addition,
+                         inexpr_long, lo)
         else:
-            expr = Table(table_name, values, inexpr_long, lo)
+            expr = Table(table_type, table_name, values, inexpr_long, lo)
             if addition != 0:
                 expr = Add(expr, addition)
         yield expr
@@ -558,19 +566,20 @@ class MakeCodeForRange:
             expr = to_scan_list.pop()
 
             for x in expr.walk():
-                extra += 2
                 if x.IS_VAR:
                     var_name = x._name
                     if var_name not in visited_subexprs:
                         visited_subexprs.add(var_name)
                         to_scan_list.append(self._named_subexprs[var_name])
-                    extra -= 2
                 elif x.IS_TABLE:
                     total_bytes += x.table_bytes()
+                    extra += 2
                 elif x.IS_CAST:
-                    extra -= 2
+                    pass
                 elif x.IS_COND:
-                    extra += 1
+                    extra += 3
+                else:
+                    extra += 2
 
         return total_bytes + extra * self._opt.overhead_multiply // 2
 

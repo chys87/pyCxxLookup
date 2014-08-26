@@ -35,7 +35,7 @@
 from . import utils
 
 
-# Signed typed only allowed for intermediate values
+# Signed types only allowed for intermediate values
 I8 = 7
 U8 = 8
 I16 = 15
@@ -71,11 +71,11 @@ TypeBytes = {
 
 
 def const_type(value):
-    value = int(value)
-    if value >= 2**32:
-        return U64
-    elif value >= 2**16:
-        return U32
+    if value >= 2**16:
+        if value >= 2**32:
+            return U64
+        else:
+            return U32
     elif value >= 2**8:
         return U16
     else:
@@ -666,11 +666,10 @@ class ExprCond(Expr):
 
 
 class ExprTable(Expr):
-    def __init__(self, name, values, var, offset):
+    def __init__(self, type, name, values, var, offset):
+        self._type = type
         self._name = name
         self._values = values
-        self._max_value = utils.np_max(values)
-        self._type = const_type(self._max_value)
         self._var = var
         self._offset = offset
         self._optimized = False
@@ -698,7 +697,7 @@ class ExprTable(Expr):
         res_append = res.append
 
         indlen = len(hex(self._values.size))
-        maxlen = len(hex(self._max_value))
+        maxlen = len(hex(utils.np_max(self._values)))
 
         # I understand this is not the "correct" way to go, but this is
         # for performance.
@@ -815,5 +814,5 @@ def Cond(cond, exprT, exprF):
     return ExprCond(exprize(cond), exprize(exprT), exprize(exprF))
 
 
-def Table(name, values, var, offset):
-    return ExprTable(name, values, exprize(var), offset)
+def Table(type, name, values, var, offset):
+    return ExprTable(type, name, values, exprize(var), offset)
