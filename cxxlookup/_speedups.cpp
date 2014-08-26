@@ -29,29 +29,92 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #define PY_SSIZE_T_CLEAN
+#define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 #include <algorithm>
 #include <map>
 #include <memory>
 #include <type_traits>
 #include <assert.h>
 #include <Python.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <numpy/arrayobject.h>
 
 namespace {
 
-uint32_t do_gcd_many(const uint32_t *p, size_t n) {
-	uint32_t res = 0;
-	for (; n; --n) {
-		uint32_t v = *p++;
+template <typename T>
+class NumpyVectorIterator {
+public:
+	constexpr NumpyVectorIterator(const T *ptr, ptrdiff_t stride) :
+		ptr_(ptr), stride_(stride) {}
+
+	const T &operator *() const {
+		return *ptr_;
+	}
+
+	NumpyVectorIterator &operator ++() {
+		ptr_ = reinterpret_cast<const T *>(reinterpret_cast<intptr_t>(ptr_) + stride_);
+		return *this;
+	}
+
+	NumpyVectorIterator operator ++(int) {
+		NumpyVectorIterator copy = *this;
+		++*this;
+		return copy;
+	}
+
+	bool operator == (const NumpyVectorIterator &other) const { return ptr_ == other.ptr_; }
+	bool operator != (const NumpyVectorIterator &other) const { return ptr_ != other.ptr_; }
+
+private:
+	const T *ptr_;
+	ptrdiff_t stride_;
+};
+
+template <typename T>
+class NumpyVectorView {
+public:
+	typedef NumpyVectorIterator<T> iterator, const_iterator;
+
+public:
+	explicit NumpyVectorView(PyArrayObject *obj) :
+		ptr_(static_cast<const T *>(PyArray_DATA(obj))),
+		stride_(PyArray_STRIDES(obj)[0]),
+		n_(PyArray_DIMS(obj)[0]) {
+	}
+
+	iterator begin() const {
+		return {ptr_, stride_};
+	}
+
+	iterator end() const {
+		const T *p = reinterpret_cast<const T *>(reinterpret_cast<intptr_t>(ptr_) + stride_ * n_);
+		return {p, stride_};
+	}
+
+private:
+	const T *ptr_;
+	ptrdiff_t stride_;
+	size_t n_;
+};
+
+template <typename T>
+T do_gcd_many(const NumpyVectorView<T> &data) {
+	typedef typename std::make_unsigned<T>::type UT;
+	UT res = 0;
+	for (T u: data) {
+		if (u < 0)
+			u = -u;
+		UT v = u;
 		if (res < v) {
-			uint32_t t = v;
+			UT t = v;
 			v = res;
 			res = t;
 		}
 		while (v) {
-			uint32_t t = res % v;
+			UT t = res % v;
 			res = v;
 			v = t;
 		}
@@ -133,16 +196,20 @@ T do_min_max(const T *p, size_t n) {
 	}
 }
 
-// _speedups.gcd_many(array.tostring())
 PyObject *gcd_many(PyObject *self, PyObject *args) {
-	Py_buffer buf;
-	if (!PyArg_ParseTuple(args, "y*", &buf))
+	PyArrayObject *array;
+	if (!PyArg_ParseTuple(args, "O!", &PyArray_Type, &array))
 		return NULL;
 
-	const uint32_t *p = (const uint32_t *)buf.buf;
-	Py_ssize_t len = buf.len;
+	if (PyArray_NDIM(array) != 1)
+		Py_RETURN_NONE;
 
-	return PyLong_FromLong(do_gcd_many(p, (size_t)len / 4));
+	int type = PyArray_TYPE(array);
+
+	if (type == NPY_UINT32)
+		return PyLong_FromLong(do_gcd_many(NumpyVectorView<uint32_t>(array)));
+	else
+		Py_RETURN_NONE;
 }
 
 // np.fromstring(utils._array_for_speedups(array))
@@ -258,5 +325,7 @@ PyMODINIT_FUNC PyInit__speedups(void) __attribute__((__visibility__("default")))
 
 PyMODINIT_FUNC
 PyInit__speedups(void) {
-	return PyModule_Create(&speedups_module);
+	PyObject *module = PyModule_Create(&speedups_module);
+	import_array();
+	return module;
 }
