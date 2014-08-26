@@ -35,24 +35,34 @@ from distutils.core import setup, Extension
 import os
 import sys
 
-_ext_modules = [
-    Extension('_speedups', ['cxxlookup/_speedups.cpp']),
-]
+import numpy as np
 
-if 'linux' in sys.platform:
-    DEFAULT_CFLAGS = \
-        '-O2 -march=native -fno-exceptions -Wl,--as-needed '\
-        '-fvisibility-inlines-hidden -fvisibility=hidden -flto -std=gnu++11'
-    os.environ.setdefault('CFLAGS', DEFAULT_CFLAGS)
-    os.environ.setdefault('CXXFLAGS', DEFAULT_CFLAGS)
 
-setup(name='cxxlookup',
-      version='1.0',
-      author='chys',
-      author_email='admin@CHYS.INFO',
-      url='https://github.com/chys87/pyCxxLookup',
-      license='BSD',
-      description='Generate C++ lookup functions with Python 3.',
-      packages=['cxxlookup'],
-      ext_package='cxxlookup',
-      ext_modules=_ext_modules)
+def main():
+    if 'linux' in sys.platform:
+        DEFAULT_CFLAGS = \
+            '-O2 -march=native -fno-exceptions -Wl,--as-needed '\
+            '-fvisibility-inlines-hidden -fvisibility=hidden -flto '\
+            '-std=gnu++11'
+        os.environ.setdefault('CFLAGS', DEFAULT_CFLAGS)
+        os.environ.setdefault('CXXFLAGS', DEFAULT_CFLAGS)
+
+    ext_modules = [
+        Extension('_speedups', ['cxxlookup/_speedups.cpp'],
+                  include_dirs=[np.get_include()]),
+    ]
+
+    setup(name='cxxlookup',
+          version='1.0',
+          author='chys',
+          author_email='admin@CHYS.INFO',
+          url='https://github.com/chys87/pyCxxLookup',
+          license='BSD',
+          description='Generate C++ lookup functions with Python 3.',
+          packages=['cxxlookup'],
+          ext_package='cxxlookup',
+          ext_modules=ext_modules)
+
+
+if __name__ == '__main__':
+    main()
