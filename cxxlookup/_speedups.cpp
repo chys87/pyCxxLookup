@@ -125,10 +125,22 @@ T do_gcd_many(const NumpyVectorView<T> &data) {
 }
 
 template <typename T>
-size_t do_unique(T *out, const T *in, size_t n) {
+PyObject *do_unique(PyArrayObject *array) {
 
 	typedef typename std::make_unsigned<T>::type UT;
 
+	size_t n = PyArray_DIMS(array)[0];
+
+	npy_intp dims[1] = {npy_intp(n)};
+
+	PyArray_Descr *descr = PyArray_DESCR(array);
+	Py_INCREF(descr);
+	PyArrayObject *out_obj = reinterpret_cast<PyArrayObject *>(
+			PyArray_Empty(1, dims, descr, 0));
+	if (out_obj == NULL)
+		return NULL;
+
+	T *out = static_cast<T *>(PyArray_DATA(out_obj));
 	T *po = out;
 	{
 		// Let's try to eliminate some (but not all) duplicates with
@@ -136,8 +148,7 @@ size_t do_unique(T *out, const T *in, size_t n) {
 		constexpr uint32_t HASHTABLE_SIZE = 61;
 		T hashtable[HASHTABLE_SIZE] = {1, 0};
 
-		for (size_t k = n; k; --k) {
-			T v = *in++;
+		for (T v: NumpyVectorView<T>(array)) {
 			size_t h = UT(v) % HASHTABLE_SIZE;
 			if (hashtable[h] != v) {
 				hashtable[h] = v;
@@ -147,8 +158,22 @@ size_t do_unique(T *out, const T *in, size_t n) {
 	}
 
 	std::sort(out, po);
+	size_t out_size = std::unique(out, po) - out;
 
-	return std::unique(out, po) - out;
+	if (out_size != n) {
+		dims[0] = out_size;
+
+		PyArray_Dims newshape = {
+			dims,
+			1
+		};
+
+		PyObject *res = PyArray_Resize(out_obj, &newshape, 1, NPY_CORDER);
+		if (res == NULL)
+			return NULL;
+		Py_DECREF(res);
+	}
+	return reinterpret_cast<PyObject *>(out_obj);
 }
 
 template <typename T>
@@ -215,29 +240,21 @@ PyObject *gcd_many(PyObject *self, PyObject *args) {
 		Py_RETURN_NONE;
 }
 
-// np.fromstring(utils._array_for_speedups(array))
 PyObject *unique(PyObject *self, PyObject *args) {
-	Py_buffer buf;
-	int type;
-	if (!PyArg_ParseTuple(args, "(y*i)", &buf, &type))
+	PyArrayObject *array;
+	if (!PyArg_ParseTuple(args, "O!", &PyArray_Type, &array))
 		return NULL;
 
-	size_t bytes = buf.len;
-
-	if (type == 32) {
-		// uint32
-		size_t n = bytes / 4;
-		std::unique_ptr<uint32_t[]> out(new uint32_t[n]);
-		n = do_unique(out.get(), reinterpret_cast<const uint32_t *>(buf.buf), n);
-		return PyBytes_FromStringAndSize((const char *)out.get(), n * sizeof(uint32_t));
-	} else if (type == 63) {
-		// int64
-		size_t n = bytes / 8;
-		std::unique_ptr<int64_t[]> out(new int64_t[n]);
-		n = do_unique(out.get(), reinterpret_cast<const int64_t *>(buf.buf), n);
-		return PyBytes_FromStringAndSize((const char *)out.get(), n * sizeof(int64_t));
-	} else {
+	if (PyArray_NDIM(array) != 1)
 		Py_RETURN_NONE;
+
+	switch (PyArray_TYPE(array)) {
+		case NPY_UINT32:
+			return do_unique<uint32_t>(array);
+		case NPY_INT64:
+			return do_unique<int64_t>(array);
+		default:
+			Py_RETURN_NONE;
 	}
 }
 

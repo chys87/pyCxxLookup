@@ -46,20 +46,6 @@ def make_numpy_array(values):
     return np.array(values, dtype=np.uint32)
 
 
-def _array_for_speedups(arr, np_uint32=np.uint32, np_int64=np.int64):
-    dtype = arr.dtype
-    type = dtype.type
-    if type is np_uint32:
-        return (arr.tostring(), 32)
-    elif type is np_int64:
-        return (arr.tostring(), 63)
-
-    bits = dtype.itemsize * 8
-    if np.issubdtype(dtype, np.signedinteger):
-        bits -= 1
-    return (arr.tostring(), bits)
-
-
 def most_common_element(arr):
     """Return the most common element of a numpy array"""
     if _speedups:
@@ -208,9 +194,9 @@ def np_unique(array):
     [1, 2, 3, 4, 5, 7]
     '''
     if _speedups:
-        res = _speedups.unique(_array_for_speedups(array))
+        res = _speedups.unique(array)
         if res is not None:
-            return np.fromstring(res, array.dtype)
+            return res
     return np.unique(array)
 
 
