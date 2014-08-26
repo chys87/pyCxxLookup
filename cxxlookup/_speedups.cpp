@@ -152,12 +152,11 @@ size_t do_unique(T *out, const T *in, size_t n) {
 }
 
 template <typename T>
-std::pair<T, size_t> do_mode_cnt(const T *p, size_t n) {
+std::pair<T, size_t> do_mode_cnt(const NumpyVectorView<T> &data) {
 	std::map<T, size_t> cntmap;
 	uint32_t maxval = 0;
 	size_t maxcnt = 0;
-	for (size_t k = n; k; --k) {
-		T v = *p++;
+	for (T v: data) {
 		size_t cnt = ++cntmap[v];
 		if (cnt > maxcnt) {
 			maxcnt = cnt;
@@ -238,22 +237,23 @@ PyObject *unique(PyObject *self, PyObject *args) {
 	}
 }
 
-// _speedups.unique(utils._array_for_speedups(array))
 PyObject *mode_cnt(PyObject *self, PyObject *args) {
-	Py_buffer buf;
-	int type;
-	if (!PyArg_ParseTuple(args, "(y*i)", &buf, &type))
+	PyArrayObject *array;
+	if (!PyArg_ParseTuple(args, "O!", &PyArray_Type, &array))
 		return NULL;
 
-	size_t bytes = buf.len;
+	if (PyArray_NDIM(array) != 1)
+		Py_RETURN_NONE;
+	if (PyArray_DIMS(array)[0] == 0)
+		Py_RETURN_NONE;
 
-	if (type == 32 && bytes >= 4) {
-		size_t n = bytes / 4;
-		auto res = do_mode_cnt(reinterpret_cast<const uint32_t *>(buf.buf), n);
+	int type = PyArray_TYPE(array);
+
+	if (type == NPY_UINT32) {
+		auto res = do_mode_cnt(NumpyVectorView<uint32_t>(array));
 		return Py_BuildValue("(In)", unsigned(res.first), Py_ssize_t(res.second));
-	} else if (type == 63 && bytes >= 8) {
-		size_t n = bytes / 8;
-		auto res = do_mode_cnt(reinterpret_cast<const uint64_t *>(buf.buf), n);
+	} else if (type == NPY_INT64) {
+		auto res = do_mode_cnt(NumpyVectorView<int64_t>(array));
 		return Py_BuildValue("(Ln)", static_cast<PY_LONG_LONG>(int64_t(res.first)), Py_ssize_t(res.second));
 	} else {
 		Py_RETURN_NONE;

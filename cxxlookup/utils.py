@@ -63,7 +63,7 @@ def _array_for_speedups(arr, np_uint32=np.uint32, np_int64=np.int64):
 def most_common_element(arr):
     """Return the most common element of a numpy array"""
     if _speedups:
-        res = _speedups.mode_cnt(_array_for_speedups(arr))
+        res = _speedups.mode_cnt(arr)
         if res is not None:
             return res[0]
     u, indices = np.unique(arr, return_inverse=True)
@@ -78,7 +78,7 @@ def most_common_element_count(arr):
     (5, 3)
     """
     if _speedups:
-        res = _speedups.mode_cnt(_array_for_speedups(arr))
+        res = _speedups.mode_cnt(arr)
         if res is not None:
             return res
     u, indices = np.unique(arr, return_inverse=True)
