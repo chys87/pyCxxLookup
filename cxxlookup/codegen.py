@@ -377,9 +377,7 @@ class MakeCodeForRange:
             offset = 0
             if (addition > 0) and (addition + maxv < 16):
                 offset = addition
-            lo_chunk, hi_chunk = utils.stridize(values, 2, -offset)
-            compressed_values = (lo_chunk + offset) | \
-                ((hi_chunk + offset) << 4)
+            compressed_values = utils.compress_array(values + offset, 2)
 
             subexpr, _ = self._smart_subexpr(inexpr, inexpr_long)
 
@@ -397,9 +395,7 @@ class MakeCodeForRange:
 
         # Try using "compressed" table. 4->1
         if maxv_bits == 2 and num > 32:
-            chunk_a, chunk_b, chunk_c, chunk_d = utils.stridize(values, 4, 0)
-            compressed_values = chunk_a | (chunk_b << 2) | \
-                (chunk_c << 4) | (chunk_d << 6)
+            compressed_values = utils.compress_array(values, 4)
 
             subexpr, _ = self._smart_subexpr(inexpr, inexpr_long)
 
@@ -417,8 +413,7 @@ class MakeCodeForRange:
 
         # Try using "bitvector". 8->1
         if (maxv == 1) and num > 64:
-            chunks_v = utils.stridize(values, 8, 0)
-            compressed_values = sum(v << i for (i, v) in enumerate(chunks_v))
+            compressed_values = utils.compress_array(values, 8)
 
             subexpr, _ = self._smart_subexpr(inexpr, inexpr_long)
 

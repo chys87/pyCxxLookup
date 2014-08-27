@@ -138,18 +138,23 @@ def trim_brackets(s):
     return s
 
 
-def stridize(array, n, default=0):
+def compress_array(array, n):
     '''
-    => (array[0], array[n], array[2*n], ...), (array[1], arra[n+1], ...), ...
+    Compress several elements of one array into one.
     '''
+    bits = 8 // n
     l = array.size
-    if l % n == 0:
-        return np.reshape(array, [l // n, n]).T
-    else:
-        padsize = n - (l % n)
-        tmp = [array, np.zeros(padsize, dtype=array.dtype) + default]
-        tmp = np.concatenate(tmp)
-        return tmp.reshape([l // n + 1, n]).T
+    lo = l % n
+    if not lo:
+        lo = n
+
+    res = array[::n].copy()
+    for i in range(1, lo):
+        res |= array[i::n] << (i * bits)
+    for i in range(lo, n):
+        res[:-1] |= array[i::n] << (i * bits)
+
+    return res
 
 
 def gcd_many(array, _speedups=_speedups):
