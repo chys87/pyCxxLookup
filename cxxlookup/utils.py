@@ -83,6 +83,10 @@ def is_const(array):
 
 def is_linear(array):
     """Returns if the given array is linear"""
+    if _speedups:
+        res = _speedups.is_linear(array)
+        if res is not None:
+            return res
     return is_const(array[1:] - array[:-1])
 
 

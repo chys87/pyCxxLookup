@@ -316,6 +316,42 @@ PyObject *min_max(PyObject *self, PyObject *args) {
 	}
 }
 
+template <typename T>
+bool do_is_linear(const NumpyVectorView<T> &data) {
+	auto it = data.begin();
+	auto end = data.end();
+
+	T first = *it;
+	T second = *++it;
+	T slope = second - first;
+
+	T v = second;
+	while (++it != end) {
+		v += slope;
+		if (v != *it)
+			return false;
+	}
+	return true;
+}
+
+PyObject *is_linear(PyObject *self, PyObject *args) {
+	PyArrayObject *array;
+	if (!PyArg_ParseTuple(args, "O!", &PyArray_Type, &array))
+		return NULL;
+
+	if (PyArray_NDIM(array) != 1)
+		Py_RETURN_NONE;
+	if (PyArray_DIMS(array)[0] < 3)
+		Py_RETURN_TRUE;
+
+	switch (PyArray_TYPE(array)) {
+		case NPY_UINT32:
+			return PyBool_FromLong(do_is_linear(NumpyVectorView<uint32_t>(array)));
+		default:
+			Py_RETURN_NONE;
+	}
+}
+
 PyMethodDef speedups_methods[] = {
 	{"gcd_many",  &gcd_many, METH_VARARGS,
 		"Calculate greatest common divisor (GCD) of a uint32_t array"},
@@ -325,6 +361,8 @@ PyMethodDef speedups_methods[] = {
 		"Compute mode and its corresponding count for uint32_t/int64_t arrays"},
 	{"min_max", &min_max, METH_VARARGS,
 		"Compute min/max of an array"},
+	{"is_linear", &is_linear, METH_VARARGS,
+		"Return whether an array is linear"},
 	{NULL, NULL, 0, NULL}
 };
 
