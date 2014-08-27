@@ -133,15 +133,15 @@ class Expr(metaclass=ExprMeta):
             yield expr
             stk_extend(expr.children())
 
-    def walk_var(self):
-        """Shortcut for filter(lambda x: x.IS_VAR, self.walk())
+    def walk_tempvar(self):
+        """Shortcut for filter(lambda x: x.IS_TEMPVAR, self.walk())
         """
         stk = [self]
         stk_pop = stk.pop
         stk_extend = stk.extend
         while stk:
             expr = stk_pop()
-            if expr.IS_VAR:
+            if expr.IS_TEMPVAR:
                 yield expr
             stk_extend(expr.children())
 
@@ -158,15 +158,59 @@ class Expr(metaclass=ExprMeta):
 
 
 class ExprVar(Expr):
-    def __init__(self, type, name):
+    def __init__(self, type):
         self._type = type
+
+    def rettype(self):
+        return self._type
+
+
+class ExprFixedVar(ExprVar):
+    def __init__(self, type, name):
+        super().__init__(type)
         self._name = name
 
     def __str__(self):
         return self._name
 
-    def rettype(self):
-        return self._type
+
+class ExprTempVar(ExprVar):
+    _name_cache = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ')
+
+    def __init__(self, type, var):
+        self._type = type
+        self._var = var
+
+    def get_name(self):
+        var = self._var
+
+        cache = self._name_cache
+        CL = len(cache)
+        if var < CL:
+            s = cache[var]
+            if s:
+                return s
+        else:
+            cache += [None] * (var + 1 - CL)
+
+        length = 1
+        expressible = 26
+
+        ind = var
+        while ind >= expressible:
+            length += 1
+            ind -= expressible
+            expressible *= 26
+
+        s = ''
+        for _ in range(length):
+            s = chr(ord('A') + (ind % 26)) + s
+            ind //= 26
+        cache[var] = s
+        return s
+
+    def __str__(self):
+        return self.get_name()
 
 
 class ExprConst(Expr):
@@ -396,10 +440,10 @@ class ExprRShift(ExprShift):
 
     def optimize(self):
         '''
-        >>> expr = RShift(Add(Var(U32, 'c'), 30), 2)
+        >>> expr = RShift(Add(FixedVar(U32, 'c'), 30), 2)
         >>> str(expr.optimize())
         '(((c + 2u) >> 2) + 7u)'
-        >>> expr = RShift(Add(Var(U32, 'c'), Var(U32, 'd'), -30), 2)
+        >>> expr = RShift(Add(FixedVar(U32, 'c'), FixedVar(U32, 'd'), -30), 2)
         >>> str(expr.optimize())
         '(((c + d + 2u) >> 2) - 8u)'
         '''
@@ -752,8 +796,12 @@ def exprize(expr,
         return ExprConst(U32, int(expr))
 
 
-def Var(type, name):
-    return ExprVar(type, name)
+def FixedVar(type, name):
+    return ExprFixedVar(type, name)
+
+
+def TempVar(type, var):
+    return ExprTempVar(type, var)
 
 
 def Const(type, value):

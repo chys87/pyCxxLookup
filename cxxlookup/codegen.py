@@ -55,56 +55,16 @@ def make_code(base, values, hole, opt):
     res = []
     codes = {}  # lo: (hi, code)
 
-    def format_code(expr, subexprs):
-        main_str = '\t\t\treturn {};\n'.format(utils.trim_brackets(str(expr)))
-        main_statics = expr.statics()
-
-        added_var_name = {'c', 'cl'}
-        subexpr_str = []
-        statics = []
-
-        def add_var_in_expr(expr):
-            # Depth-first search
-            for x in expr.walk_var():
-                var_name = x._name
-                if var_name not in added_var_name:
-                    var_expr = subexprs[var_name]
-                    add_var_in_expr(var_expr)
-
-                    var_type = var_expr.rettype()
-                    type_name = TypeNames[var_type]
-                    while var_expr.IS_CAST and var_expr._type >= var_type:
-                        var_expr = var_expr._value
-
-                    subexpr_str.append('\t\t\t{} {} = {};\n'.format(
-                        type_name, var_name,
-                        utils.trim_brackets(str(var_expr))))
-                    statics.append(var_expr.statics())
-                    added_var_name.add(var_name)
-
-        add_var_in_expr(expr)
-        statics.append(main_statics)
-        statics.sort()
-
-        if not subexpr_str:
-            code = main_str
-        else:
-            code = '\t\t{\n'
-            code += ''.join(subexpr_str)
-            code += main_str
-            code += '\t\t}\n'
-        return code, statics
-
     for lo, values in sorted(groups.items()):
         range_name = 'X_{:x}_{:x}'.format(lo, lo + values.size)
         expr, subexprs = MakeCodeForRange(
             lo, values, range_name, opt).make_code()
 
-        code, static = format_code(expr, subexprs)
+        code, static = _format_code(expr, subexprs)
         codes[lo] = lo + values.size, code
         res.extend(filter(None, static))
 
-    hole_code = format_code(Const(U32, hole), None)[0]
+    hole_code = _format_code(Const(U32, hole), None)[0]
 
     # Create a reverse map from code to range (For sharing code between case's)
     rcode = {}
@@ -133,6 +93,50 @@ def make_code(base, values, hole, opt):
     return ''.join(res)
 
 
+def _format_code(expr, subexprs):
+    main_str = '\t\t\treturn {};\n'.format(utils.trim_brackets(str(expr)))
+    main_statics = expr.statics()
+
+    added_var = 0
+    subexpr_str = []
+    statics = []
+
+    def add_var_in_expr(expr):
+        nonlocal added_var
+
+        # Depth-first search
+        for x in expr.walk_tempvar():
+            var_id = x._var
+            var_id_mask = 1 << var_id
+            if not (added_var & var_id_mask):
+                var_expr = subexprs[var_id]
+                add_var_in_expr(var_expr)
+
+                var_type = var_expr.rettype()
+                type_name = TypeNames[var_type]
+                while var_expr.IS_CAST and var_expr._type >= var_type:
+                    var_expr = var_expr._value
+
+                subexpr_str.append('\t\t\t{} {} = {};\n'.format(
+                    type_name, x.get_name(),
+                    utils.trim_brackets(str(var_expr))))
+                statics.append(var_expr.statics())
+                added_var |= var_id_mask
+
+    add_var_in_expr(expr)
+    statics.append(main_statics)
+    statics.sort()
+
+    if not subexpr_str:
+        code = main_str
+    else:
+        code = '\t\t{\n'
+        code += ''.join(subexpr_str)
+        code += main_str
+        code += '\t\t}\n'
+    return code, statics
+
+
 class MakeCodeForRange:
     def __init__(self, lo, values, table_name, opt):
         self._lo = lo
@@ -141,63 +145,46 @@ class MakeCodeForRange:
         self._opt = opt
 
         self._expr = None
-        self._subexpr_ind = 0
-        self._named_subexprs = {}
+        self._subexprs = []
 
     def make_code(self):
         if self._expr:
-            return self._expr, self._named_subexprs
+            return self._expr, self._subexprs
         expr = self._make_code(
             self._lo, self._values, self._table_name,
-            Var(U32, 'c'), Var(U64, 'cl'))
+            FixedVar(U32, 'c'), FixedVar(U64, 'cl'))
 
-        # Remove unreachable subexpressions
-        reachable = {'c', 'cl'}
+        # Find reachable subexpressions
+        reachable = 0
         to_visit = [expr]
         while to_visit:
             x = to_visit.pop()
-            for subexpr in x.walk_var():
-                if subexpr._name not in reachable:
-                    reachable.add(subexpr._name)
-                    to_visit.append(self._named_subexprs[subexpr._name])
-
-        for name in list(self._named_subexprs):
-            if name not in reachable:
-                del self._named_subexprs[name]
+            for subexpr in x.walk_tempvar():
+                subexpr_var_id = subexpr._var
+                mask = 1 << subexpr_var_id
+                if not (reachable & mask):
+                    reachable |= mask
+                    to_visit.append(self._subexprs[subexpr_var_id])
 
         # Extract complicated expressions
         # as variables for code readability
         expr.replace_complicated_subexpressions(8, self._make_subexpr)
-        # The purpose of the sort is to get deterministic results
-        for _, subexpr in sorted(self._named_subexprs.items()):
-            subexpr.replace_complicated_subexpressions(8, self._make_subexpr)
+        for i, subexpr in enumerate(self._subexprs):
+            if reachable & (1 << i):
+                subexpr.replace_complicated_subexpressions(
+                    8, self._make_subexpr)
 
         # Final optimization: Remove unnecessary explicit cast
         while expr.IS_CAST and expr._type >= I32:
             expr = expr._value
 
         self._expr = expr
-        return expr, self._named_subexprs
+        return expr, self._subexprs
 
     def _make_subexpr(self, expr):
-        ind = self._subexpr_ind
-        self._subexpr_ind = ind + 1
-
-        bits = 1
-        expressible = 26
-
-        while ind >= expressible:
-            bits += 1
-            ind -= expressible
-            expressible *= 26
-
-        s = ''
-        for _ in range(bits):
-            s = chr(ord('A') + (ind % 26)) + s
-            ind //= 26
-
-        self._named_subexprs[s] = expr
-        return Var(expr.rettype(), s)
+        ind = len(self._subexprs)
+        self._subexprs.append(expr)
+        return TempVar(expr.rettype(), ind)
 
     def _make_code(self, lo, values, table_name, inexpr, inexpr_long,
                    addition=0):
@@ -556,17 +543,19 @@ class MakeCodeForRange:
         total_bytes = 0
         extra = 0
 
-        visited_subexprs = {'c', 'cl'}
+        visited_subexprs = 0
         to_scan_list = [expr]
         while to_scan_list:
             expr = to_scan_list.pop()
 
             for x in expr.walk():
                 if x.IS_VAR:
-                    var_name = x._name
-                    if var_name not in visited_subexprs:
-                        visited_subexprs.add(var_name)
-                        to_scan_list.append(self._named_subexprs[var_name])
+                    if x.IS_TEMPVAR:
+                        var_id = x._var
+                        mask = 1 << var_id
+                        if not (visited_subexprs & mask):
+                            visited_subexprs |= mask
+                            to_scan_list.append(self._subexprs[var_id])
                 elif x.IS_TABLE:
                     total_bytes += x.table_bytes()
                     extra += 2
