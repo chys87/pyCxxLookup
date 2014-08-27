@@ -187,33 +187,44 @@ class MakeCodeForRange:
         return TempVar(expr.rettype(), ind)
 
     def _make_code(self, lo, values, table_name, inexpr, inexpr_long,
-                   addition=0):
+                   addition=0, **kwargs):
         exprs = [expr.optimize() for expr in
                  self._yield_code(lo, values, table_name, inexpr,
-                                  inexpr_long, addition)]
+                                  inexpr_long, addition, **kwargs)]
         return min(exprs, key=self._overhead)
 
     def _yield_code(self, lo, values, table_name, inexpr, inexpr_long,
-                    addition=0):
+                    addition=0,
+                    uniqs=None, skip_gcd_reduce=False,
+                    skip_almost_linear_reduce=False,
+                    skip_compress_4bits=False):
         """
         Everything in values must be positive; addition may be negative.
         The final result has type uint32_t even if it may be negative.
 
         Yield:
-            instances of some child class of Expr
+            instances of some subclass of Expr
         """
         if values.dtype != np.uint32:
             values = np.array(values, np.uint32)
 
-        minv = utils.np_min(values)
-        if minv != 0:
-            values = values - minv
-            addition += minv
-            minv = 0
-
         num = values.size
         hi = lo + num
-        uniqs = utils.np_unique(values)
+
+        if uniqs is None:
+            minv = utils.np_min(values)
+            if minv != 0:
+                values = values - minv
+                addition += minv
+
+            uniqs = utils.np_unique(values)
+
+        else:
+            minv = int(uniqs[0])
+            if minv:
+                values = values - minv
+                uniqs = uniqs - minv
+
         uniq = uniqs.size
         maxv = int(uniqs[-1])
         minv = 0
@@ -294,9 +305,8 @@ class MakeCodeForRange:
                 # Use bit test.
                 mask = 0
                 value0, value1 = uniqs
-                for k in range(num):
-                    if values[k] == value1:
-                        mask |= 1 << k
+                for k in (values == value1).nonzero()[0]:
+                    mask |= 1 << int(k)
 
                 Bits = U64 if num > 32 else U32
                 expr = And(RShift(Const(Bits, mask), Add(inexpr, -lo)),
@@ -334,46 +344,55 @@ class MakeCodeForRange:
             return
 
         # Most elements are almost linear, but a few outliers exist.
-        slope, slope_count = utils.most_common_element_count(
-            np.array(values[1:], np.int64) - np.array(values[:-1], np.int64))
-        if slope and slope_count * 2 >= num:
-            reduced_values = values - slope * (
-                lo + np.arange(num, dtype=np.int64))
-            # Be careful to avoid infinite recursion
-            reduced_uniqs = utils.np_unique(reduced_values)
-            if reduced_uniqs.size <= uniq // 2 or \
-                    int(reduced_uniqs[-1] - reduced_uniqs[0]).bit_length() <= \
-                    maxv_bits // 2:
-                offset = int(reduced_uniqs[0])  # utils.np_min(reduced_values)
-                # Negative values may cause problems
-                reduced_values -= offset
-                reduced_values = np.array(reduced_values, np.uint32)
+        if not skip_almost_linear_reduce:
+            slope, slope_count = utils.most_common_element_count(
+                np.array(values[1:], np.int64) -
+                np.array(values[:-1], np.int64))
+            if slope and slope_count * 2 >= num:
+                reduced_values = values - slope * (
+                    lo + np.arange(num, dtype=np.int64))
+                # Be careful to avoid infinite recursion
+                reduced_uniqs = utils.np_unique(reduced_values)
+                if reduced_uniqs.size <= uniq // 2 or \
+                        int(reduced_uniqs[-1] - reduced_uniqs[0]).bit_length()\
+                        <= maxv_bits // 2:
+                    # utils.np_min(reduced_values)
+                    offset = int(reduced_uniqs[0])
+                    # Negative values may cause problems
+                    reduced_values -= offset
+                    reduced_values = np.array(reduced_values, np.uint32)
+                    reduced_uniqs -= offset
+                    reduced_uniqs = np.array(reduced_uniqs, np.uint32)
 
-                subexpr, subexpr_long = self._smart_subexpr(inexpr,
-                                                            inexpr_long)
+                    subexpr, subexpr_long = self._smart_subexpr(inexpr,
+                                                                inexpr_long)
 
-                expr = self._make_code(lo, reduced_values,
-                                       table_name + '_reduced',
-                                       subexpr, subexpr_long,
-                                       addition=offset+addition)
+                    expr = self._make_code(lo, reduced_values,
+                                           table_name + '_reduced',
+                                           subexpr, subexpr_long,
+                                           addition=offset+addition,
+                                           uniqs=reduced_uniqs,
+                                           skip_almost_linear_reduce=True)
 
-                # inexpr * slope + expr
-                yield Add(Mul(subexpr, slope), expr)
+                    # inexpr * slope + expr
+                    yield Add(Mul(subexpr, slope), expr)
 
         # Two-level lookup?
         if maxv > num > uniq * 4 // 3:
             indices = np.searchsorted(uniqs, values)
             # Level 1
             expr = self._make_code(lo, indices, table_name + '_index',
-                                   inexpr, inexpr_long)
+                                   inexpr, inexpr_long,
+                                   uniqs=np.arange(uniq, dtype=np.uint32))
             # Level 2
             expr = self._make_code(0, uniqs, table_name + '_value', expr, expr,
-                                   addition=addition)
+                                   addition=addition,
+                                   uniqs=uniqs)
 
             yield expr
 
         # Try using "compressed" table. 2->1
-        if maxv_bits in (3, 4) and num > 16:
+        if not skip_compress_4bits and maxv_bits in (3, 4) and num > 16:
             offset = 0
             if (addition > 0) and (addition + maxv < 16):
                 offset = addition
@@ -430,13 +449,15 @@ class MakeCodeForRange:
             return
 
         # GCD may help
-        gcd = utils.gcd_reduce(values)
-        if gcd > 1:
-            offset = int(values[0]) % gcd
-            reduced_values = values // gcd
-            expr = self._make_code(lo, reduced_values, table_name + '_gcd',
-                                   inexpr, inexpr_long)
-            yield Add(Mul(expr, gcd), addition + offset)
+        if not skip_gcd_reduce:
+            gcd = utils.gcd_reduce(values)
+            if gcd > 1:
+                offset = int(values[0]) % gcd
+                reduced_values = values // gcd
+                expr = self._make_code(lo, reduced_values, table_name + '_gcd',
+                                       inexpr, inexpr_long,
+                                       skip_gcd_reduce=True)
+                yield Add(Mul(expr, gcd), addition + offset)
 
         # Try splitting the data into low and high parts
         for k in (16, 8, 4):
@@ -445,12 +466,14 @@ class MakeCodeForRange:
 
             lomask = np.uint32((1 << k) - 1)
             lo_values = values & lomask
-            hi_values = values & ~lomask
+            hi_values = values - lo_values
 
-            lo_uniq = utils.np_unique(lo_values).size
+            lo_uniqs = utils.np_unique(lo_values)
+            lo_uniq = lo_uniqs.size
             if lo_uniq < 2:
                 continue
-            hi_uniq = utils.np_unique(hi_values).size
+            hi_uniqs = utils.np_unique(hi_values)
+            hi_uniq = hi_uniqs.size
             if hi_uniq < 2:
                 continue
 
@@ -478,14 +501,19 @@ class MakeCodeForRange:
                 # helpful.  We cannot just try out.  That'd be too slow.
                 continue
 
+            # Fix hi_uniqs as soon as we decide to proceed
+            hi_uniqs //= hi_gcd
+
             subexpr, subexpr_long = self._smart_subexpr(inexpr, inexpr_long)
 
             lo_expr = self._make_code(
                 lo, lo_values, '{}_{}lo'.format(table_name, k),
-                subexpr, subexpr_long, addition=addition)
+                subexpr, subexpr_long, addition=addition,
+                uniqs=lo_uniqs, skip_compress_4bits=(k == 4))
             hi_expr = self._make_code(
                 lo, hi_values, '{}_{}hi'.format(table_name, k),
-                subexpr, subexpr_long)
+                subexpr, subexpr_long,
+                uniqs=hi_uniqs, skip_compress_4bits=(k == 4))
             yield Add(lo_expr, Mul(hi_expr, hi_gcd))
 
         # Finally fall back to the simplest one-level table
