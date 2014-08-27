@@ -97,7 +97,8 @@ def make_code(base, values, hole, opt):
 
     for lo, values in sorted(groups.items()):
         range_name = 'X_{:x}_{:x}'.format(lo, lo + values.size)
-        expr, subexprs = MakeCodeForRange.make(lo, values, range_name, opt)
+        expr, subexprs = MakeCodeForRange(
+            lo, values, range_name, opt).make_code()
 
         code, static = format_code(expr, subexprs)
         codes[lo] = lo + values.size, code
@@ -143,15 +144,9 @@ class MakeCodeForRange:
         self._subexpr_ind = 0
         self._named_subexprs = {}
 
-    @staticmethod
-    def make(lo, values, table_name, opt):
-        obj = MakeCodeForRange(lo, values, table_name, opt)
-        obj.make_code()
-        return obj._expr, obj._named_subexprs
-
     def make_code(self):
         if self._expr:
-            return
+            return self._expr, self._named_subexprs
         expr = self._make_code(
             self._lo, self._values, self._table_name,
             Var(U32, 'c'), Var(U64, 'cl'))
@@ -182,6 +177,7 @@ class MakeCodeForRange:
             expr = expr._value
 
         self._expr = expr
+        return expr, self._named_subexprs
 
     def _make_subexpr(self, expr):
         ind = self._subexpr_ind
