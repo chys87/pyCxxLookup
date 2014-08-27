@@ -240,7 +240,8 @@ def profiling(func):
 
     def _func(*args, **kwargs):
         # We hope it can be set or unset at run-time, so put the check here
-        if not os.environ.get('pyCxxLookup_Profiling'):
+        profiling_setting = os.environ.get('pyCxxLookup_Profiling')
+        if not profiling_setting:
             return func(*args, **kwargs)
 
         try:
@@ -252,15 +253,28 @@ def profiling(func):
         pr = profile.Profile()
         pr.enable()
         try:
-            return func(*args, **kwargs)
+            res = func(*args, **kwargs)
 
         finally:
             pr.disable()
-            ps = pstats.Stats(pr, stream=sys.stderr)
-            ps.sort_stats('cumulative', 'stdname')
-            ps.print_stats(30)
 
-            ps.sort_stats('tottime', 'stdname')
-            ps.print_stats(30)
+        try:
+            stat_count = int(profiling_setting)
+        except ValueError:
+            stat_count = 0
+        if stat_count < 10:
+            stat_count = 30
+
+        ps = pstats.Stats(pr, stream=sys.stderr)
+        ps.sort_stats('cumulative', 'stdname')
+        ps.print_stats(stat_count)
+
+        ps.sort_stats('tottime', 'stdname')
+        ps.print_stats(stat_count)
+
+        if os.environ.get('pyCxxLookup_Profiling_Callers'):
+            ps.print_callers()
+
+        return res
 
     return _func

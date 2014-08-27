@@ -279,14 +279,25 @@ def main():
     parser.add_argument('-p', '--profiling', default=False,
                         action='store_true',
                         help='Run Python profiler')
+    parser.add_argument('-P', '--profiling-stat-count', default=30,
+                        type=int,
+                        help='Set the number of stats from the profiler')
+    parser.add_argument('-C', '--profiling-callers', default=False,
+                        action='store_true',
+                        help='Include caller info in profiler output')
     parser.add_argument('test_names', nargs='*', metavar='TEST_NAME',
                         help='Only run the specified tests.')
     args = parser.parse_args()
 
     if args.profiling:
-        os.environ['pyCxxLookup_Profiling'] = '1'
+        os.environ['pyCxxLookup_Profiling'] = str(args.profiling_stat_count)
     else:
         os.environ.pop('pyCxxLookup_Profiling', None)
+
+    if args.profiling_callers:
+        os.environ['pyCxxLookup_Profiling_Callers'] = '1'
+    else:
+        os.environ.pop('pyCxxLookup_Profiling_Callers', None)
 
     if args.static:
         static_check()
