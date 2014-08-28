@@ -352,6 +352,38 @@ PyObject *is_linear(PyObject *self, PyObject *args) {
 	}
 }
 
+template <typename T>
+bool do_is_const(const NumpyVectorView<T> &data) {
+	auto it = data.begin();
+	auto end = data.end();
+
+	T first = *it;
+
+	while (++it != end) {
+		if (first != *it)
+			return false;
+	}
+	return true;
+}
+
+PyObject *is_const(PyObject *self, PyObject *args) {
+	PyArrayObject *array;
+	if (!PyArg_ParseTuple(args, "O!", &PyArray_Type, &array))
+		return NULL;
+
+	if (PyArray_NDIM(array) != 1)
+		Py_RETURN_NONE;
+	if (PyArray_DIMS(array)[0] < 2)
+		Py_RETURN_TRUE;
+
+	switch (PyArray_TYPE(array)) {
+		case NPY_UINT32:
+			return PyBool_FromLong(do_is_const(NumpyVectorView<uint32_t>(array)));
+		default:
+			Py_RETURN_NONE;
+	}
+}
+
 template <typename R, int NPR, typename T>
 PyObject *do_slope_array(PyArrayObject *array) {
 	size_t n = PyArray_DIMS(array)[0];
@@ -416,6 +448,8 @@ PyMethodDef speedups_methods[] = {
 		"Compute min/max of an array"},
 	{"is_linear", &is_linear, METH_VARARGS,
 		"Return whether an array is linear"},
+	{"is_const", &is_const, METH_VARARGS,
+		"Return whether an array is constant"},
 	{"slope_array", &slope_array, METH_VARARGS,
 		"Create the \"slope array\" of a given array"},
 	{NULL, NULL, 0, NULL}

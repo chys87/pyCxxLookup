@@ -75,6 +75,10 @@ def most_common_element_count(arr):
 
 def is_const(array):
     """Returns if the given array is constant"""
+    if _speedups:
+        res = _speedups.is_const(array)
+        if res is not None:
+            return res
     if array.size == 0:
         return True
     else:
