@@ -94,12 +94,9 @@ def make_code(base, values, hole, opt):
 
 
 def _format_code(expr, subexprs):
-    main_str = '\t\t\treturn {};\n'.format(utils.trim_brackets(str(expr)))
-    main_statics = expr.statics()
 
     added_var = 0
-    subexpr_str = []
-    statics = []
+    var_output_order = []
 
     def add_var_in_expr(expr):
         nonlocal added_var
@@ -111,30 +108,53 @@ def _format_code(expr, subexprs):
             if not (added_var & var_id_mask):
                 var_expr = subexprs[var_id]
                 add_var_in_expr(var_expr)
-
-                var_type = var_expr.rettype()
-                type_name = TypeNames[var_type]
-                while var_expr.IS_CAST and var_expr._type >= var_type:
-                    var_expr = var_expr._value
-
-                subexpr_str.append('\t\t\t{} {} = {};\n'.format(
-                    type_name, x.get_name(),
-                    utils.trim_brackets(str(var_expr))))
-                statics.append(var_expr.statics())
+                var_output_order.append(var_id)
                 added_var |= var_id_mask
 
     add_var_in_expr(expr)
-    statics.append(main_statics)
-    statics.sort()
 
-    if not subexpr_str:
-        code = main_str
+    if not added_var:
+        # No temporary variable
+        main_str = '\t\t\treturn {};\n'.format(utils.trim_brackets(str(expr)))
+        main_statics = expr.statics()
+        return main_str, (main_statics,)
+
     else:
-        code = '\t\t{\n'
-        code += ''.join(subexpr_str)
-        code += main_str
-        code += '\t\t}\n'
-    return code, statics
+        # Rename temporary variables
+        rename_map = {var: k for (k, var) in enumerate(var_output_order)}
+
+        def rename_var(expr):
+            for x in expr.walk_tempvar():
+                if not getattr(x, '_var_renamed', False):
+                    x._var_renamed = True
+                    x._var = rename_map[x._var]
+
+        rename_var(expr)
+
+        code_str = ['\t\t{\n']
+        statics = []
+
+        for (k, var) in enumerate(var_output_order):
+            var_expr = subexprs[var]
+            rename_var(var_expr)
+            var_type = var_expr.rettype()
+            type_name = TypeNames[var_type]
+            while var_expr.IS_CAST and var_expr._type >= var_type:
+                var_expr = var_expr._value
+
+            code_str.append('\t\t\t{} {} = {};\n'.format(
+                type_name, ExprTempVar.get_name(k),
+                utils.trim_brackets(str(var_expr))))
+            statics.append(var_expr.statics())
+
+        main_str = '\t\t\treturn {};\n'.format(utils.trim_brackets(str(expr)))
+        code_str.append(main_str)
+        code_str.append('\t\t}\n')
+
+        statics.append(expr.statics())
+        statics.sort()
+
+        return ''.join(code_str), statics
 
 
 class MakeCodeForRange:

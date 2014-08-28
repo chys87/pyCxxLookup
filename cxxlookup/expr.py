@@ -181,10 +181,9 @@ class ExprTempVar(ExprVar):
         self._type = type
         self._var = var
 
-    def get_name(self):
-        var = self._var
-
-        cache = self._name_cache
+    @classmethod
+    def get_name(cls, var):
+        cache = cls._name_cache
         CL = len(cache)
         if var < CL:
             s = cache[var]
@@ -210,7 +209,7 @@ class ExprTempVar(ExprVar):
         return s
 
     def __str__(self):
-        return self.get_name()
+        return self.get_name(self._var)
 
 
 class ExprConst(Expr):
