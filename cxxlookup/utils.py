@@ -143,10 +143,7 @@ def compress_array(array, n):
     Compress several elements of one array into one.
     '''
     bits = 8 // n
-    l = array.size
-    lo = l % n
-    if not lo:
-        lo = n
+    lo = array.size % n or n
 
     res = array[::n].copy()
     for i in range(1, lo):
@@ -155,6 +152,18 @@ def compress_array(array, n):
         res[:-1] |= array[i::n] << (i * bits)
 
     return res
+
+
+def slope_array(array, dtype=np.int64):
+    '''
+    >>> slope_array(np.array([1,2,4,0,2], np.uint32), np.int64).tolist()
+    [1, 2, -4, 2]
+    '''
+    if _speedups:
+        res = _speedups.slope_array(array, dtype)
+        if res is not None:
+            return res
+    return np.array(array[1:], dtype) - np.array(array[:-1], dtype)
 
 
 def gcd_many(array, _speedups=_speedups):
@@ -191,7 +200,7 @@ def gcd_reduce(array):
     Return the max gcd, such that is_const(v % gcd for v in array)
     '''
     array = np_unique(array)
-    return gcd_many(array[1:] - array[:-1])
+    return gcd_many(slope_array(array, array.dtype.type))
 
 
 def np_unique(array):

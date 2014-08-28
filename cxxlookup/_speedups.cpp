@@ -352,6 +352,59 @@ PyObject *is_linear(PyObject *self, PyObject *args) {
 	}
 }
 
+template <typename R, int NPR, typename T>
+PyObject *do_slope_array(PyArrayObject *array) {
+	size_t n = PyArray_DIMS(array)[0];
+	if (n < 2)
+		Py_RETURN_NONE;
+
+	npy_intp dims[1] = {npy_intp(n - 1)};
+
+	PyArrayObject *out_obj = reinterpret_cast<PyArrayObject *>(
+			PyArray_EMPTY(1, dims, NPR, 0));
+	if (out_obj == NULL)
+		return NULL;
+
+	R *out = static_cast<R *>(PyArray_DATA(out_obj));
+
+	NumpyVectorView<T> view(array);
+	auto it = view.begin();
+	auto end = view.end();
+
+	R prev = *it;
+	while (++it != end) {
+		R cur = *it;
+		*out++ = cur - prev;
+		prev = cur;
+	}
+
+	return reinterpret_cast<PyObject *>(out_obj);
+}
+
+PyObject *slope_array(PyObject *self, PyObject *args) {
+	PyArrayObject *array;
+	PyTypeObject *dtype;
+	if (!PyArg_ParseTuple(args, "O!O", &PyArray_Type, &array, &dtype))
+		return NULL;
+
+	// Note that dtype may not necessarily be a real PyTypeObject object
+
+	if (PyArray_NDIM(array) != 1)
+		Py_RETURN_NONE;
+
+	switch (PyArray_TYPE(array)) {
+		case NPY_UINT32:
+			if (dtype == &PyInt64ArrType_Type)
+				return do_slope_array<int64_t, NPY_INT64, uint32_t>(array);
+			else if (dtype == &PyUInt32ArrType_Type)
+				return do_slope_array<uint32_t, NPY_UINT32, uint32_t>(array);
+			else
+				Py_RETURN_NONE;
+		default:
+			Py_RETURN_NONE;
+	}
+}
+
 PyMethodDef speedups_methods[] = {
 	{"gcd_many",  &gcd_many, METH_VARARGS,
 		"Calculate greatest common divisor (GCD) of a uint32_t array"},
@@ -363,6 +416,8 @@ PyMethodDef speedups_methods[] = {
 		"Compute min/max of an array"},
 	{"is_linear", &is_linear, METH_VARARGS,
 		"Return whether an array is linear"},
+	{"slope_array", &slope_array, METH_VARARGS,
+		"Create the \"slope array\" of a given array"},
 	{NULL, NULL, 0, NULL}
 };
 

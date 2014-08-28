@@ -315,8 +315,6 @@ class ExprAdd(Expr):
         if self._const and self._const._complicated(threshold):
             self._const = callback(self._const)
 
-        self._optimized = False
-
 
 class ExprBinary(Expr):
     def __init__(self, left, right):

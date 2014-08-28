@@ -366,8 +366,7 @@ class MakeCodeForRange:
         # Most elements are almost linear, but a few outliers exist.
         if not skip_almost_linear_reduce:
             slope, slope_count = utils.most_common_element_count(
-                np.array(values[1:], np.int64) -
-                np.array(values[:-1], np.int64))
+                utils.slope_array(values, np.int64))
             if slope and slope_count * 2 >= num:
                 reduced_values = values - slope * (
                     lo + np.arange(num, dtype=np.int64))
