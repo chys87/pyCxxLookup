@@ -87,7 +87,7 @@ def is_linear(array):
         res = _speedups.is_linear(array)
         if res is not None:
             return res
-    return is_const(array[1:] - array[:-1])
+    return is_const(slope_array(array, array.dtype.type))
 
 
 def const_range(array):

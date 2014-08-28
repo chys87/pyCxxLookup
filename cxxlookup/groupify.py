@@ -51,7 +51,7 @@ def __yield_linear_parts(array, linear_threshold, const_threshold):
     if L < 3:
         return
 
-    delta = np.array(array[1:], np.int64) - np.array(array[:-1], np.int64)
+    delta = utils.slope_array(array, np.int64)
     unequal = (delta[1:] != delta[:-1]).nonzero()[0].tolist()
 
     unequal.append(L - 2)
