@@ -34,6 +34,11 @@
 
 from . import utils
 
+try:
+    from . import _speedups
+except ImportError:
+    _speedups = None
+
 
 # Signed types only allowed for intermediate values
 I8 = 7
@@ -736,6 +741,13 @@ class ExprTable(Expr):
     def statics(self):
         res = [self._var.statics()]
         res_append = res.append
+
+        if _speedups:
+            c_array = _speedups.format_c_array(
+                self._values, TypeNames[self._type], self._name)
+            if c_array is not None:
+                res_append(c_array)
+                return ''.join(res)
 
         indlen = len(hex(self._values.size))
         maxlen = len(hex(utils.np_max(self._values)))

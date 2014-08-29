@@ -100,6 +100,29 @@ private:
 	size_t n_;
 };
 
+// Including "0x"
+// Eqv. to "len(hex(v))" in Python
+template <typename T>
+inline unsigned hex_len(T v) {
+	unsigned r = 3;
+	while ((v >>= 4) != 0)
+		++r;
+	return r;
+}
+
+inline char *copy_string(char *dst, const char *src) {
+	size_t l = strlen(src);
+	return static_cast<char *>(memcpy(dst, src, l)) + l;
+}
+
+template <typename T>
+inline char *write_hex(char *dst, T v, unsigned len) {
+	while (len--) {
+		*dst++ = "0123456789abcdef"[(v >> (len * 4)) & 15u];
+	}
+	return dst;
+}
+
 template <typename T>
 T do_gcd_many(const NumpyVectorView<T> &data) {
 	typedef typename std::make_unsigned<T>::type UT;
@@ -437,6 +460,54 @@ PyObject *slope_array(PyObject *self, PyObject *args) {
 	}
 }
 
+// format_c_array(array, type_str, name_str)
+PyObject *format_c_array(PyObject *self, PyObject *args) {
+	PyArrayObject *array;
+	const char *type;
+	Py_ssize_t type_len;
+	const char *name;
+	Py_ssize_t name_len;
+
+	if (!PyArg_ParseTuple(args, "O!s#s#", &PyArray_Type, &array, &type, &type_len, &name, &name_len))
+		return NULL;
+
+	if (PyArray_NDIM(array) != 1)
+		Py_RETURN_NONE;
+	if (PyArray_TYPE(array) != NPY_UINT32)
+		Py_RETURN_NONE;
+
+	size_t n = PyArray_DIMS(array)[0];
+	unsigned n_len = hex_len(n);
+
+	uint32_t max = do_min_max<1>(NumpyVectorView<uint32_t>(array));
+	unsigned max_len = hex_len(max);
+
+	size_t mem_upper_bound = (max_len + 4) * n + (n_len + 8) * (n / 8) + type_len + name_len + 128;
+	std::unique_ptr<char[]> buf(new char[mem_upper_bound]);
+	char *w = buf.get();
+
+	w += snprintf(w, mem_upper_bound, "const %.*s %.*s[%#zx] = {",
+			int(type_len), type, int(name_len), name, n);
+
+	size_t i = 0;
+	for (uint32_t v: NumpyVectorView<uint32_t>(array)) {
+		if (i % 8 == 0) {
+			w = copy_string(w, "\n\t/* 0x");
+			w = write_hex(w, i, n_len - 2);
+			w = copy_string(w, " */");
+		}
+		w = copy_string(w, " 0x");
+		w = write_hex(w, v, max_len - 2);
+		*w++ = ',';
+		++i;
+	}
+	if (*(w - 1) == ',')
+		--w;
+	w = copy_string(w, "\n};\n\n");
+
+	return Py_BuildValue("s#", buf.get(), Py_ssize_t(w - buf.get()));
+}
+
 PyMethodDef speedups_methods[] = {
 	{"gcd_many",  &gcd_many, METH_VARARGS,
 		"Calculate greatest common divisor (GCD) of a uint32_t array"},
@@ -452,6 +523,8 @@ PyMethodDef speedups_methods[] = {
 		"Return whether an array is constant"},
 	{"slope_array", &slope_array, METH_VARARGS,
 		"Create the \"slope array\" of a given array"},
+	{"format_c_array", &format_c_array, METH_VARARGS,
+		"Format a NumPy string as a C array"},
 	{NULL, NULL, 0, NULL}
 };
 
