@@ -479,9 +479,9 @@ class MakeCodeForRange:
                 yield Add(Mul(expr, gcd), addition + offset)
 
         # Try splitting the data into low and high parts
-        for k in (16, 8, 4):
-            if not k < maxv_bits <= 2 * k:
-                continue
+        for k in (4, 8, 16):
+            if k >= maxv_bits:
+                break
 
             lomask = np.uint32((1 << k) - 1)
             lo_values = values & lomask
@@ -494,7 +494,7 @@ class MakeCodeForRange:
             hi_uniqs = utils.np_unique(hi_values)
             hi_uniq = hi_uniqs.size
             if hi_uniq < 2:
-                continue
+                break
 
             hi_gcd = utils.gcd_many(hi_values)
             hi_values //= hi_gcd
@@ -534,6 +534,9 @@ class MakeCodeForRange:
                 subexpr, subexpr_long,
                 uniqs=hi_uniqs, skip_compress_4bits=(k == 4))
             yield Add(lo_expr, Mul(hi_expr, hi_gcd))
+
+            if hi_uniq <= 2:  # No reason to continue trying
+                break
 
         # Finally fall back to the simplest one-level table
         table_type = const_type(maxv)
