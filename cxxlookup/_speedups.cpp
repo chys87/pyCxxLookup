@@ -92,15 +92,30 @@ inline char *write_hex(char *dst, T v, unsigned len) {
 	return dst;
 }
 
+template <typename T> inline constexpr
+typename std::enable_if<std::is_signed<T>::value, typename std::make_unsigned<T>::type>::type do_abs(T u) {
+	return (u < 0) ? -u : u;
+}
+
+template <typename T> inline constexpr
+typename std::enable_if<std::is_unsigned<T>::value, T>::type do_abs(T u) {
+	return u;
+}
+
 template <typename T>
-T do_gcd_many(VectorView<T> data) {
+typename std::make_unsigned<T>::type do_gcd_many(VectorView<T> data) {
 	typedef typename std::make_unsigned<T>::type UT;
-	UT res = 0;
-	while (data) {
-		T u = data.next();
-		if (u < 0)
-			u = -u;
-		UT v = u;
+
+	if (!data)
+		return 0;
+
+	UT prev = do_abs(data.next());
+	UT res = prev;
+	while ((res != 1) && data) {
+		UT v = do_abs(data.next());
+		if (v == prev)
+			continue;
+		prev = v;
 		if (res < v) {
 			UT t = v;
 			v = res;
@@ -111,8 +126,6 @@ T do_gcd_many(VectorView<T> data) {
 			res = v;
 			v = t;
 		}
-		if (res == 1)
-			break;
 	}
 	return res;
 }
