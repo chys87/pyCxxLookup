@@ -57,8 +57,8 @@ public:
 	bool more() const { return (ptr_ != end_); }
 	explicit operator bool() const { return more(); }
 
-	const T &next() {
-		const T& v = *ptr_;
+	T next() {
+		T v = *ptr_;
 		ptr_ = reinterpret_cast<const T*>(reinterpret_cast<intptr_t>(ptr_) + stride_);
 		return v;
 	}
