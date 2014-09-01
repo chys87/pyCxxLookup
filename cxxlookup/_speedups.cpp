@@ -45,59 +45,28 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 namespace {
 
 template <typename T>
-class NumpyVectorIterator {
+class VectorView {
 public:
-	constexpr NumpyVectorIterator(const T *ptr, ptrdiff_t stride) :
-		ptr_(ptr), stride_(stride) {}
-
-	const T &operator *() const {
-		return *ptr_;
-	}
-
-	NumpyVectorIterator &operator ++() {
-		ptr_ = reinterpret_cast<const T *>(reinterpret_cast<intptr_t>(ptr_) + stride_);
-		return *this;
-	}
-
-	NumpyVectorIterator operator ++(int) {
-		NumpyVectorIterator copy = *this;
-		++*this;
-		return copy;
-	}
-
-	bool operator == (const NumpyVectorIterator &other) const { return ptr_ == other.ptr_; }
-	bool operator != (const NumpyVectorIterator &other) const { return ptr_ != other.ptr_; }
-
-private:
-	const T *ptr_;
-	ptrdiff_t stride_;
-};
-
-template <typename T>
-class NumpyVectorView {
-public:
-	typedef NumpyVectorIterator<T> iterator, const_iterator;
-
-public:
-	explicit NumpyVectorView(PyArrayObject *obj) :
+	explicit VectorView(PyArrayObject *obj) :
 		ptr_(static_cast<const T *>(PyArray_DATA(obj))),
 		stride_(PyArray_STRIDES(obj)[0]),
-		n_(PyArray_DIMS(obj)[0]) {
+		end_(reinterpret_cast<const T *>(reinterpret_cast<intptr_t>(ptr_) + stride_ * PyArray_DIMS(obj)[0])) {
 	}
+	VectorView(const VectorView &) = default;
 
-	iterator begin() const {
-		return {ptr_, stride_};
-	}
+	bool more() const { return (ptr_ != end_); }
+	explicit operator bool() const { return more(); }
 
-	iterator end() const {
-		const T *p = reinterpret_cast<const T *>(reinterpret_cast<intptr_t>(ptr_) + stride_ * n_);
-		return {p, stride_};
+	const T &next() {
+		const T& v = *ptr_;
+		ptr_ = reinterpret_cast<const T*>(reinterpret_cast<intptr_t>(ptr_) + stride_);
+		return v;
 	}
 
 private:
 	const T *ptr_;
 	ptrdiff_t stride_;
-	size_t n_;
+	const T *end_;
 };
 
 // Including "0x"
@@ -124,10 +93,11 @@ inline char *write_hex(char *dst, T v, unsigned len) {
 }
 
 template <typename T>
-T do_gcd_many(const NumpyVectorView<T> &data) {
+T do_gcd_many(VectorView<T> data) {
 	typedef typename std::make_unsigned<T>::type UT;
 	UT res = 0;
-	for (T u: data) {
+	while (data) {
+		T u = data.next();
 		if (u < 0)
 			u = -u;
 		UT v = u;
@@ -171,7 +141,9 @@ PyObject *do_unique(PyArrayObject *array) {
 		constexpr uint32_t HASHTABLE_SIZE = 61;
 		T hashtable[HASHTABLE_SIZE] = {1, 0};
 
-		for (T v: NumpyVectorView<T>(array)) {
+		VectorView<T> view(array);
+		while (view) {
+			T v = view.next();
 			size_t h = UT(v) % HASHTABLE_SIZE;
 			if (hashtable[h] != v) {
 				hashtable[h] = v;
@@ -200,11 +172,12 @@ PyObject *do_unique(PyArrayObject *array) {
 }
 
 template <typename T>
-std::pair<T, size_t> do_mode_cnt(const NumpyVectorView<T> &data) {
+std::pair<T, size_t> do_mode_cnt(VectorView<T> data) {
 	std::map<T, size_t> cntmap;
 	uint32_t maxval = 0;
 	size_t maxcnt = 0;
-	for (T v: data) {
+	while (data) {
+		T v = data.next();
 		size_t cnt = ++cntmap[v];
 		if (cnt > maxcnt) {
 			maxcnt = cnt;
@@ -215,29 +188,30 @@ std::pair<T, size_t> do_mode_cnt(const NumpyVectorView<T> &data) {
 }
 
 template <int mode, typename T>
-T do_min_max(const NumpyVectorView<T> &data) {
-	auto it = data.begin();
-	auto end = data.end();
-
-	assert (it != end);
+T do_min_max(VectorView<T> data) {
+	assert(data.more());
 
 	if (mode == 0) {
-		T m = *it;
-		while (++it != end)
-			if (*it < m)
-				m = *it;
+		T m = data.next();
+		while (data) {
+			T v = data.next();
+			if (v < m)
+				m = v;
+		}
 		return m;
 	} else if (mode == 1) {
-		T M = *it;
-		while (++it != end)
-			if (*it > M)
-				M = *it;
+		T M = data.next();
+		while (data) {
+			T v = data.next();
+			if (v > M)
+				M = v;
+		}
 		return M;
 	} else {
-		T m = *it;
-		T M = *it;
-		while (++it != end) {
-			T v = *it;
+		T m = data.next();
+		T M = m;
+		while (data) {
+			T v = data.next();
 			if (v < m)
 				m = v;
 			if (v > M)
@@ -258,7 +232,7 @@ PyObject *gcd_many(PyObject *self, PyObject *args) {
 	int type = PyArray_TYPE(array);
 
 	if (type == NPY_UINT32)
-		return PyLong_FromLong(do_gcd_many(NumpyVectorView<uint32_t>(array)));
+		return PyLong_FromLong(do_gcd_many(VectorView<uint32_t>(array)));
 	else
 		Py_RETURN_NONE;
 }
@@ -294,10 +268,10 @@ PyObject *mode_cnt(PyObject *self, PyObject *args) {
 	int type = PyArray_TYPE(array);
 
 	if (type == NPY_UINT32) {
-		auto res = do_mode_cnt(NumpyVectorView<uint32_t>(array));
+		auto res = do_mode_cnt(VectorView<uint32_t>(array));
 		return Py_BuildValue("(In)", unsigned(res.first), Py_ssize_t(res.second));
 	} else if (type == NPY_INT64) {
-		auto res = do_mode_cnt(NumpyVectorView<int64_t>(array));
+		auto res = do_mode_cnt(VectorView<int64_t>(array));
 		return Py_BuildValue("(Ln)", static_cast<PY_LONG_LONG>(int64_t(res.first)), Py_ssize_t(res.second));
 	} else {
 		Py_RETURN_NONE;
@@ -308,9 +282,9 @@ template <int mode>
 PyObject *min_max_mode(PyArrayObject *array) {
 	switch (PyArray_TYPE(array)) {
 		case NPY_UINT32:
-			return PyLong_FromLong(do_min_max<mode>(NumpyVectorView<uint32_t>(array)));
+			return PyLong_FromLong(do_min_max<mode>(VectorView<uint32_t>(array)));
 		case NPY_INT64:
-			return PyLong_FromLongLong(do_min_max<mode>(NumpyVectorView<int64_t>(array)));
+			return PyLong_FromLongLong(do_min_max<mode>(VectorView<int64_t>(array)));
 		default:
 			Py_RETURN_NONE;
 	}
@@ -340,18 +314,15 @@ PyObject *min_max(PyObject *self, PyObject *args) {
 }
 
 template <typename T>
-bool do_is_linear(const NumpyVectorView<T> &data) {
-	auto it = data.begin();
-	auto end = data.end();
-
-	T first = *it;
-	T second = *++it;
+bool do_is_linear(VectorView<T> data) {
+	T first = data.next();
+	T second = data.next();
 	T slope = second - first;
 
 	T v = second;
-	while (++it != end) {
+	while (data) {
 		v += slope;
-		if (v != *it)
+		if (v != data.next())
 			return false;
 	}
 	return true;
@@ -369,21 +340,18 @@ PyObject *is_linear(PyObject *self, PyObject *args) {
 
 	switch (PyArray_TYPE(array)) {
 		case NPY_UINT32:
-			return PyBool_FromLong(do_is_linear(NumpyVectorView<uint32_t>(array)));
+			return PyBool_FromLong(do_is_linear(VectorView<uint32_t>(array)));
 		default:
 			Py_RETURN_NONE;
 	}
 }
 
 template <typename T>
-bool do_is_const(const NumpyVectorView<T> &data) {
-	auto it = data.begin();
-	auto end = data.end();
+bool do_is_const(VectorView<T> data) {
+	T first = data.next();
 
-	T first = *it;
-
-	while (++it != end) {
-		if (first != *it)
+	while (data) {
+		if (first != data.next())
 			return false;
 	}
 	return true;
@@ -401,7 +369,7 @@ PyObject *is_const(PyObject *self, PyObject *args) {
 
 	switch (PyArray_TYPE(array)) {
 		case NPY_UINT32:
-			return PyBool_FromLong(do_is_const(NumpyVectorView<uint32_t>(array)));
+			return PyBool_FromLong(do_is_const(VectorView<uint32_t>(array)));
 		default:
 			Py_RETURN_NONE;
 	}
@@ -422,13 +390,10 @@ PyObject *do_slope_array(PyArrayObject *array) {
 
 	R *out = static_cast<R *>(PyArray_DATA(out_obj));
 
-	NumpyVectorView<T> view(array);
-	auto it = view.begin();
-	auto end = view.end();
-
-	R prev = *it;
-	while (++it != end) {
-		R cur = *it;
+	VectorView<T> view(array);
+	R prev = view.next();
+	while (view) {
+		R cur = view.next();
 		*out++ = cur - prev;
 		prev = cur;
 	}
@@ -479,7 +444,7 @@ PyObject *format_c_array(PyObject *self, PyObject *args) {
 	size_t n = PyArray_DIMS(array)[0];
 	unsigned n_len = hex_len(n);
 
-	uint32_t max = do_min_max<1>(NumpyVectorView<uint32_t>(array));
+	uint32_t max = do_min_max<1>(VectorView<uint32_t>(array));
 	unsigned max_len = hex_len(max);
 
 	size_t mem_upper_bound = (max_len + 4) * n + (n_len + 8) * (n / 8) + type_len + name_len + 128;
@@ -490,7 +455,9 @@ PyObject *format_c_array(PyObject *self, PyObject *args) {
 			int(type_len), type, int(name_len), name, n);
 
 	size_t i = 0;
-	for (uint32_t v: NumpyVectorView<uint32_t>(array)) {
+	VectorView<uint32_t> view(array);
+	while (view) {
+		uint32_t v= view.next();
 		if (i % 8 == 0) {
 			w = copy_string(w, "\n\t/* 0x");
 			w = write_hex(w, i, n_len - 2);
