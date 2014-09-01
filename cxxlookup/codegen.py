@@ -370,18 +370,14 @@ class MakeCodeForRange:
             if slope and slope_count * 2 >= num:
                 reduced_values = values - slope * (
                     lo + np.arange(num, dtype=np.int64))
+                # Negative values may cause problems
+                offset = utils.np_min(reduced_values)
+                reduced_values -= offset
+                reduced_values = np.array(reduced_values, np.uint32)
                 # Be careful to avoid infinite recursion
                 reduced_uniqs = utils.np_unique(reduced_values)
-                if reduced_uniqs.size <= uniq // 2 or \
-                        int(reduced_uniqs[-1] - reduced_uniqs[0]).bit_length()\
-                        <= maxv_bits // 2:
-                    # utils.np_min(reduced_values)
-                    offset = int(reduced_uniqs[0])
-                    # Negative values may cause problems
-                    reduced_values -= offset
-                    reduced_values = np.array(reduced_values, np.uint32)
-                    reduced_uniqs -= offset
-                    reduced_uniqs = np.array(reduced_uniqs, np.uint32)
+                if reduced_uniqs.size * 2 <= uniq or \
+                        int(reduced_uniqs[-1]).bit_length() <= maxv_bits // 2:
 
                     subexpr, subexpr_long = self._smart_subexpr(inexpr,
                                                                 inexpr_long)
