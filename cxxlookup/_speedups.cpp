@@ -173,12 +173,23 @@ PyObject *do_unique(PyArrayObject *array) {
 
 template <typename T>
 std::pair<T, size_t> do_mode_cnt(VectorView<T> data) {
+	assert(data.more());
+
+	T prev = data.next();
+	T maxval = prev;
+	size_t maxcnt = 1;
+
 	std::map<T, size_t> cntmap;
-	uint32_t maxval = 0;
-	size_t maxcnt = 0;
+	auto pair = cntmap.insert(std::make_pair(maxval, 1));
+	size_t *prevp = &pair.first->second;
+
 	while (data) {
 		T v = data.next();
-		size_t cnt = ++cntmap[v];
+		if (v != prev) {
+			prev = v;
+			prevp = &cntmap[v];
+		}
+		size_t cnt = ++*prevp;
 		if (cnt > maxcnt) {
 			maxcnt = cnt;
 			maxval = v;
