@@ -449,15 +449,14 @@ PyObject *slope_array(PyObject *self, PyObject *args) {
 	}
 }
 
-// format_c_array(array, type_str, name_str)
+// format_c_array(array, type, name_str)
 PyObject *format_c_array(PyObject *self, PyObject *args) {
 	PyArrayObject *array;
-	const char *type;
-	Py_ssize_t type_len;
+	unsigned type;
 	const char *name;
 	Py_ssize_t name_len;
 
-	if (!PyArg_ParseTuple(args, "O!s#s#", &PyArray_Type, &array, &type, &type_len, &name, &name_len))
+	if (!PyArg_ParseTuple(args, "O!Is#", &PyArray_Type, &array, &type, &name, &name_len))
 		return NULL;
 
 	if (PyArray_NDIM(array) != 1)
@@ -471,12 +470,12 @@ PyObject *format_c_array(PyObject *self, PyObject *args) {
 	uint32_t max = do_min_max<1>(VectorView<uint32_t>(array));
 	unsigned max_len = hex_len(max);
 
-	size_t mem_upper_bound = (max_len + 4) * n + (n_len + 8) * (n / 8) + type_len + name_len + 128;
+	size_t mem_upper_bound = (max_len + 4) * n + (n_len + 8) * (n / 8) + name_len + 128;
 	std::unique_ptr<char[]> buf(new char[mem_upper_bound]);
 	char *w = buf.get();
 
-	w += snprintf(w, mem_upper_bound, "const %.*s %.*s[%#zx] = {",
-			int(type_len), type, int(name_len), name, n);
+	w += snprintf(w, mem_upper_bound, "const %sint%u_t %.*s[%#zx] = {",
+			(type & 1) ? "" : "u", (type + 1) & ~1u, int(name_len), name, n);
 
 	size_t i = 0;
 	VectorView<uint32_t> view(array);

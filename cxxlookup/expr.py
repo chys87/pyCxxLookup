@@ -41,50 +41,38 @@ except ImportError:
 
 
 # Signed types only allowed for intermediate values
-I8 = 7
-U8 = 8
-I16 = 15
-U16 = 16
-I32 = 31
-U32 = 32
-I64 = 63
-U64 = 64
+# Unsigned: Number of bits
+# Signed: Number of bits - 1
+# E.g.: 31 = int32_t; 32 = uint32_t
+def type_name(type):
+    '''
+    >>> type_name(7), type_name(32)
+    ('int8_t', 'uint32_t')
+    '''
+    if (type & 1):
+        return 'int{}_t'.format(type + 1)
+    else:
+        return 'uint{}_t'.format(type)
 
 
-TypeNames = {
-    I8: 'int8_t',
-    U8: 'uint8_t',
-    I16: 'int16_t',
-    U16: 'uint16_t',
-    I32: 'int32_t',
-    U32: 'uint32_t',
-    I64: 'int64_t',
-    U64: 'uint64_t',
-}
-
-
-TypeBytes = {
-    I8: 1,
-    U8: 1,
-    I16: 2,
-    U16: 2,
-    I32: 4,
-    U32: 4,
-    I64: 8,
-    U64: 8,
-}
+def type_bytes(type):
+    '''
+    >>> list(map(type_bytes, [7, 8, 15, 16, 31, 32, 63, 64]))
+    [1, 1, 2, 2, 4, 4, 8, 8]
+    '''
+    return (type + 7) // 8
 
 
 def const_type(value):
     if value >= 2**16:
         if value >= 2**32:
-            return U64
+            return 64
         else:
-            return U32
+            return 32
     elif value >= 2**8:
-        return U16
+        return 16
     else:
-        return U8
+        return 8
 
 
 class ExprMeta(type):
@@ -123,7 +111,7 @@ class Expr(metaclass=ExprMeta):
 
     def rettype(self):
         type = max([x.rettype() for x in self.children()])
-        return max(type, I32)  # C type-promotion rule
+        return max(type, 31)  # C type-promotion rule
 
     def optimize(self):
         return self
@@ -227,7 +215,7 @@ class ExprConst(Expr):
             value_s = str(self._value)
         else:
             value_s = hex(self._value)
-        if self._type < U64:
+        if self._type < 64:
             return value_s + 'u'
         else:
             return 'UINT64_C({})'.format(value_s)
@@ -237,13 +225,13 @@ class ExprConst(Expr):
 
     def _complicated(self, threshold):
         # Always assign 64-bit constant to a variable for readability.
-        return (self._type == U64)
+        return (self._type == 64)
 
     @staticmethod
     def combine(const_exprs):
         """Combine multiple ExprConst into one."""
         const_value = 0
-        const_type = U32
+        const_type = 32
         for expr in const_exprs:
             const_value += expr._value
             const_type = max(const_type, expr._type)
@@ -336,7 +324,7 @@ class ExprBinary(Expr):
         return self
 
     def rettype(self):
-        return max(I32, self._left.rettype(), self._right.rettype())
+        return max(31, self._left.rettype(), self._right.rettype())
 
     def replace_complicated_subexpressions(self, threshold, callback):
         super().replace_complicated_subexpressions(threshold, callback)
@@ -348,7 +336,7 @@ class ExprBinary(Expr):
 
 class ExprShift(ExprBinary):
     def rettype(self):
-        return max(I32, self._left.rettype())
+        return max(31, self._left.rettype())
 
 
 class ExprLShift(ExprShift):
@@ -403,11 +391,11 @@ class ExprLShift(ExprShift):
             c2 = right._value
             c1 = left._right._value
             if c2 > c1:
-                expr = ExprLShift(left._left, ExprConst(U32, c2 - c1))
+                expr = ExprLShift(left._left, ExprConst(32, c2 - c1))
             elif c2 == c1:
                 expr = left._left
             else:
-                expr = ExprRShift(left._left, ExprConst(U32, c1 - c2))
+                expr = ExprRShift(left._left, ExprConst(32, c1 - c2))
             and_value = ((1 << c2) - 1) ^ ((1 << expr.rettype()) - 1)
             expr = ExprAnd(expr, Const(expr.rettype(), and_value))
             return expr.optimize()
@@ -429,7 +417,7 @@ class ExprRShift(ExprShift):
     def __init__(self, left, right):
         super().__init__(left, right)
         # Always logical shift
-        assert left.rettype() in (U8, U16, U32, U64)
+        assert left.rettype() in (8, 16, 32, 64)
 
     def __str__(self):
         # Avoid the spurious 'u' after the constant
@@ -442,10 +430,10 @@ class ExprRShift(ExprShift):
 
     def optimize(self):
         '''
-        >>> expr = RShift(Add(FixedVar(U32, 'c'), 30), 2)
+        >>> expr = RShift(Add(FixedVar(32, 'c'), 30), 2)
         >>> str(expr.optimize())
         '(((c + 2u) >> 2) + 7u)'
-        >>> expr = RShift(Add(FixedVar(U32, 'c'), FixedVar(U32, 'd'), -30), 2)
+        >>> expr = RShift(Add(FixedVar(32, 'c'), FixedVar(32, 'd'), -30), 2)
         >>> str(expr.optimize())
         '(((c + d + 2u) >> 2) - 8u)'
         '''
@@ -469,7 +457,7 @@ class ExprRShift(ExprShift):
                 remainder = c1 - (c1 >> c2 << c2)
 
                 expr = ExprAdd(left._exprs, ExprConst(ctype, remainder))
-                expr = ExprRShift(expr, ExprConst(U32, c2))
+                expr = ExprRShift(expr, ExprConst(32, c2))
                 expr = ExprAdd((expr,), ExprConst(ctype, c1 >> c2))
                 return expr.optimize()
 
@@ -529,11 +517,11 @@ class ExprMul(ExprBinary):
         if right_const:
             rv = right._value
             if rv == 0:
-                return ExprConst(U32, 0)
+                return ExprConst(32, 0)
             elif rv == 1:
                 return left
             elif (rv > 0) and (rv & (rv - 1)) == 0:  # Power of 2
-                expr = ExprLShift(left, ExprConst(U32, rv.bit_length() - 1))
+                expr = ExprLShift(left, ExprConst(32, rv.bit_length() - 1))
                 return expr.optimize()
 
         self._optimized = True
@@ -591,10 +579,10 @@ class ExprAnd(ExprBinary):
         if right_const:
             # Must cast back
             if right_value == 0xff:
-                expr = ExprCast(self.rettype(), ExprCast(U8, left))
+                expr = ExprCast(self.rettype(), ExprCast(8, left))
                 return expr.optimize()
             elif right_value == 0xffff:
-                expr = ExprCast(self.rettype(), ExprCast(U16, left))
+                expr = ExprCast(self.rettype(), ExprCast(16, left))
                 return expr.optimize()
 
         self._optimized = True
@@ -610,7 +598,7 @@ class ExprCompare(ExprBinary):
         return '({} {} {})'.format(self._left, self._compare, self._right)
 
     def rettype(self):
-        return I32
+        return 31
 
     def optimize(self):
         if self._optimized:
@@ -626,27 +614,27 @@ class ExprCompare(ExprBinary):
         # unsinged(a - (c2 << c1)) < (1 << c1)
         if right_const and self._compare == '==' and \
                 left.IS_RSHIFT and \
-                left._left.rettype() == U32 and \
+                left._left.rettype() == 32 and \
                 left._right.IS_CONST and \
-                right._type == U32:
+                right._type == 32:
             c1 = left._right._value
             c2 = right._value
             if ((c2 + 1) << c1) <= 2**32:
-                expr = ExprAdd((left._left,), ExprConst(U32, -(c2 << c1)))
-                expr = ExprCompare(expr, '<', ExprConst(U32, 1 << c1))
+                expr = ExprAdd((left._left,), ExprConst(32, -(c2 << c1)))
+                expr = ExprCompare(expr, '<', ExprConst(32, 1 << c1))
                 return expr.optimize()
 
         # (a >> c1) < c2
         # a < (c2 << c1)
         if right_const and self._compare == '<' and \
                 left.IS_RSHIFT and \
-                left._left.rettype() == U32 and \
+                left._left.rettype() == 32 and \
                 left._right.IS_CONST and \
-                right._type == U32:
+                right._type == 32:
             c1 = left._right._value
             c2 = right._value
             if (c2 << c1) < 2**32:
-                expr = ExprCompare(left._left, '<', ExprConst(U32, c2 << c1))
+                expr = ExprCompare(left._left, '<', ExprConst(32, c2 << c1))
                 return expr.optimize()
 
         self._optimized = True
@@ -660,7 +648,7 @@ class ExprCast(Expr):
         self._optimized = False
 
     def __str__(self):
-        return '{}({})'.format(TypeNames[self._type],
+        return '{}({})'.format(type_name(self._type),
                                utils.trim_brackets(str(self._value)))
 
     def children(self):
@@ -700,7 +688,7 @@ class ExprCond(Expr):
 
     def rettype(self):
         # FIXME: What does C standard say about this?
-        return max(I32, self._exprT.rettype(), self._exprF.rettype())
+        return max(31, self._exprT.rettype(), self._exprF.rettype())
 
     def optimize(self):
         if not self._optimized:
@@ -725,7 +713,7 @@ class ExprTable(Expr):
             # Add an extra 'l' so that the constant is absorbed by the
             # address of the array
             offset_s = '{:#x}'.format(self._offset)
-            if self._var.rettype() < I64:
+            if self._var.rettype() < 63:
                 offset_s += 'l'
             return '{}[{} - {}]'.format(
                 self._name, self._var, offset_s)
@@ -739,15 +727,16 @@ class ExprTable(Expr):
             return '{}[{}]'.format(self._name, var)
 
     def statics(self):
-        res = [self._var.statics()]
-        res_append = res.append
+        var_statics = self._var.statics()
 
         if _speedups:
             c_array = _speedups.format_c_array(
-                self._values, TypeNames[self._type], self._name)
+                self._values, self._type, self._name)
             if c_array is not None:
-                res_append(c_array)
-                return ''.join(res)
+                return var_statics + c_array
+
+        res = [var_statics()]
+        res_append = res.append
 
         indlen = len(hex(self._values.size))
         maxlen = len(hex(utils.np_max(self._values)))
@@ -759,7 +748,7 @@ class ExprTable(Expr):
         value_format = ' {{:#0{}x}},'.format(maxlen).format
 
         line = 'const {} {}[{:#x}] = {{'.format(
-            TypeNames[self._type], self._name, self._values.size)
+            type_name(self._type), self._name, self._values.size)
         for i, v in enumerate(self._values):
             if not (i & 7):
                 res_append(line + '\n')
@@ -787,7 +776,7 @@ class ExprTable(Expr):
         return self
 
     def table_bytes(self):
-        return self._values.size * TypeBytes[self._type]
+        return self._values.size * type_bytes(self._type)
 
     def replace_complicated_subexpressions(self, threshold, callback):
         super().replace_complicated_subexpressions(threshold, callback)
@@ -797,12 +786,12 @@ class ExprTable(Expr):
 
 ### Factory functions
 def exprize(expr,
-            isinstance=isinstance, Expr=Expr, U32=U32, ExprConst=ExprConst):
+            isinstance=isinstance, Expr=Expr, ExprConst=ExprConst):
     '''Convert int to ExprConst'''
     if isinstance(expr, Expr):
         return expr
     else:
-        return ExprConst(U32, int(expr))
+        return ExprConst(32, int(expr))
 
 
 def FixedVar(type, name):
@@ -830,7 +819,7 @@ def Add(*in_exprs):
 
     const_expr = ExprConst.combine(const_exprs)
     if not exprs:
-        return const_expr or ExprConst(U32, 0)
+        return const_expr or ExprConst(32, 0)
     elif len(exprs) == 1 and not const_expr:
         return exprs[0]
     else:
@@ -844,10 +833,10 @@ def LShift(left, right):
 def RShift(left, right):
     # Promote left
     left = exprize(left)
-    if left.rettype() < U32:
-        left = ExprCast(U32, left)
-    elif left.rettype() == I64:
-        left = ExprCast(U64, left)
+    if left.rettype() < 32:
+        left = ExprCast(32, left)
+    elif left.rettype() == 63:
+        left = ExprCast(64, left)
     return ExprRShift(left, exprize(right))
 
 

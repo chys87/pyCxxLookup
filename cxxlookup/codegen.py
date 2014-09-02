@@ -64,7 +64,7 @@ def make_code(base, values, hole, opt):
         codes[lo] = lo + values.size, code
         res.extend(filter(None, static))
 
-    hole_code = _format_code(Const(U32, hole), None)[0]
+    hole_code = _format_code(Const(32, hole), None)[0]
 
     # Create a reverse map from code to range (For sharing code between case's)
     rcode = {}
@@ -138,12 +138,11 @@ def _format_code(expr, subexprs):
             var_expr = subexprs[var]
             rename_var(var_expr)
             var_type = var_expr.rettype()
-            type_name = TypeNames[var_type]
             while var_expr.IS_CAST and var_expr._type >= var_type:
                 var_expr = var_expr._value
 
             code_str.append('\t\t\t{} {} = {};\n'.format(
-                type_name, ExprTempVar.get_name(k),
+                type_name(var_type), ExprTempVar.get_name(k),
                 utils.trim_brackets(str(var_expr))))
             statics.append(var_expr.statics())
 
@@ -172,7 +171,7 @@ class MakeCodeForRange:
             return self._expr, self._subexprs
         expr = self._make_code(
             self._lo, self._values, self._table_name,
-            FixedVar(U32, 'c'), FixedVar(U64, 'cl'))
+            FixedVar(32, 'c'), FixedVar(64, 'cl'))
 
         # Find reachable subexpressions
         reachable = 0
@@ -195,7 +194,7 @@ class MakeCodeForRange:
                     8, self._make_subexpr)
 
         # Final optimization: Remove unnecessary explicit cast
-        while expr.IS_CAST and expr._type >= I32:
+        while expr.IS_CAST and expr._type >= 31:
             expr = expr._value
 
         self._expr = expr
@@ -261,7 +260,7 @@ class MakeCodeForRange:
 
         # Constant
         if uniq == 1:
-            yield Const(U32, addition)
+            yield Const(32, addition)
             return
 
         # [0,1] => [c1,c2]. Better to use ExprCond than linear
@@ -271,9 +270,9 @@ class MakeCodeForRange:
                 if c0 == 0:
                     yield inexpr
                 else:
-                    yield Add(inexpr, Const(U32, c0))
+                    yield Add(inexpr, Const(32, c0))
             elif c0 == 0 and (c1 & (c1 - 1)) == 0:
-                yield LShift(inexpr, Const(U32, c1.bit_length() - 1))
+                yield LShift(inexpr, Const(32, c1.bit_length() - 1))
             else:
                 yield Cond(inexpr, c1, c0)
             return
@@ -316,7 +315,7 @@ class MakeCodeForRange:
                 if bcount == 1:
                     cond = Compare(inexpr, '==', lo + k)
                 else:
-                    subinexpr = Cast(U32, Add(inexpr, -lo - k))
+                    subinexpr = Cast(32, Add(inexpr, -lo - k))
                     cond = Compare(subinexpr, '<', bcount)
                 yield Cond(cond, values[k] + addition, values[0] + addition)
                 return
@@ -328,13 +327,13 @@ class MakeCodeForRange:
                 for k in (values == value1).nonzero()[0]:
                     mask |= 1 << int(k)
 
-                Bits = U64 if num > 32 else U32
+                Bits = 64 if num > 32 else 32
                 expr = And(RShift(Const(Bits, mask), Add(inexpr, -lo)),
-                           Const(U32, 1))
+                           Const(32, 1))
                 if (value1 + addition != 1) or (value0 + addition != 0):
                     expr = Cond(expr, value1 + addition, value0 + addition)
-                elif Bits > U32:
-                    expr = Cast(U32, expr)
+                elif Bits > 32:
+                    expr = Cast(32, expr)
                 yield expr
                 return
 
@@ -358,7 +357,7 @@ class MakeCodeForRange:
             for k, v in enumerate(values):
                 mask |= (int(v) + offset) << (k * bits)
             expr = Mul(Add(inexpr, -lo), bits)
-            expr = And(Cast(U32, RShift(Const(Bits, mask), expr)),
+            expr = And(Cast(32, RShift(Const(Bits, mask), expr)),
                        (1 << bits) - 1)
             yield Add(expr, addition - offset)
             return
