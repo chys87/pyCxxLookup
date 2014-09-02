@@ -794,16 +794,13 @@ def exprize(expr,
         return ExprConst(32, int(expr))
 
 
-def FixedVar(type, name):
-    return ExprFixedVar(type, name)
+FixedVar = ExprFixedVar
 
 
-def TempVar(type, var):
-    return ExprTempVar(type, var)
+TempVar = ExprTempVar
 
 
-def Const(type, value):
-    return ExprConst(type, value)
+Const = ExprConst
 
 
 def Add(*in_exprs):

@@ -228,7 +228,7 @@ class MakeCodeForRange:
             values = np.array(values, np.uint32)
 
         num = values.size
-        hi = lo + num
+        # hi = lo + num
 
         if uniqs is None:
             minv = utils.np_min(values)
@@ -348,7 +348,7 @@ class MakeCodeForRange:
                 bits = (addition + maxv).bit_length()
                 offset = addition
             # Usually it's faster to multiply by power of 2
-            for BT in 4, 8, 16, 32:
+            for BT in 8, 16, 32:
                 # +1: Multiply by (1 + power of 2) isn't slow.
                 if (BT//2 + 1 < bits < BT) and (num * BT <= Bits):
                     bits = BT
@@ -359,7 +359,10 @@ class MakeCodeForRange:
             expr = Mul(Add(inexpr, -lo), bits)
             expr = And(Cast(32, RShift(Const(Bits, mask), expr)),
                        (1 << bits) - 1)
-            yield Add(expr, addition - offset)
+            add = addition - offset
+            if add:
+                expr = ExprAdd((expr,), ExprConst(32, add))
+            yield expr
             return
 
         # Most elements are almost linear, but a few outliers exist.
