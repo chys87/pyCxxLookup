@@ -47,6 +47,17 @@ class Options:
         self.group_threshold = group_threshold
         self.overhead_multiply = overhead_multiply
 
+    def __str__(self):
+        return 'cxxlookup.Options({})'.format(', '.join(map(str, [
+            self.linear_threshold,
+            self.const_threshold,
+            self.hole_threshold,
+            self.split_threshold,
+            self.group_threshold,
+            self.overhead_multiply])))
+
+    __repr__ = __str__
+
 
 # Prefere smaller code size
 OPT_Os = Options(64, 32, 24, 128, 3, 4)
