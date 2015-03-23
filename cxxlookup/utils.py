@@ -160,6 +160,9 @@ def compress_array(array, n):
 
 def slope_array(array, dtype=np.int64):
     '''
+    slope_array is similar to np.diff, but with speedups for certain types.
+    Additionally, we support output types different than the input type.
+
     >>> slope_array(np.array([1,2,4,0,2], np.uint32), np.int64).tolist()
     [1, 2, -4, 2]
     '''
