@@ -47,26 +47,28 @@ namespace {
 template <typename T>
 class VectorView {
 public:
+	// stride_ can be 0
 	explicit VectorView(PyArrayObject *obj) :
 		ptr_(static_cast<const T *>(PyArray_DATA(obj))),
 		stride_(PyArray_STRIDES(obj)[0]),
-		end_(reinterpret_cast<const T *>(reinterpret_cast<intptr_t>(ptr_) + stride_ * PyArray_DIMS(obj)[0])) {
+		remaining_(PyArray_DIMS(obj)[0]) {
 	}
 	VectorView(const VectorView &) = default;
 
-	bool more() const { return (ptr_ != end_); }
+	bool more() const { return remaining_; }
 	explicit operator bool() const { return more(); }
 
 	T next() {
 		T v = *ptr_;
 		ptr_ = reinterpret_cast<const T*>(reinterpret_cast<intptr_t>(ptr_) + stride_);
+		--remaining_;
 		return v;
 	}
 
 private:
 	const T *ptr_;
 	ptrdiff_t stride_;
-	const T *end_;
+	unsigned remaining_;
 };
 
 // Including "0x"
