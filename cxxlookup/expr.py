@@ -735,7 +735,7 @@ class ExprTable(Expr):
             if c_array is not None:
                 return var_statics + c_array
 
-        res = [var_statics()]
+        res = [var_statics]
         res_append = res.append
 
         indlen = len(hex(self._values.size))
