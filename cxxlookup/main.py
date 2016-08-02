@@ -2,7 +2,7 @@
 # coding: utf-8
 # vim: set ts=4 sts=4 sw=4 expandtab cc=80:
 
-# Copyright (c) 2014, chys <admin@CHYS.INFO>
+# Copyright (c) 2014, 2016, chys <admin@CHYS.INFO>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -53,15 +53,12 @@ class CxxLookup:
         self._hole = hole
         self._opt = opt
 
-        self._code = None
-
     def make_code(self):
-        if self._code is None:
-            self._code = self._make_code()
-        return self._code
+        return self.code
 
+    @utils.cached_property
     @utils.profiling
-    def _make_code(self):
+    def code(self):
         code = codegen.make_code(self._base, self._values, self._hole,
                                  self._opt)
         return codegen.wrap_code(self._func_name, code)

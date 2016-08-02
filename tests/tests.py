@@ -2,7 +2,7 @@
 # coding: utf-8
 # vim: set ts=4 sts=4 sw=4 expandtab cc=80:
 
-# Copyright (c) 2014, chys <admin@CHYS.INFO>
+# Copyright (c) 2014, 2016, chys <admin@CHYS.INFO>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -117,16 +117,15 @@ class Tester:
 TEST_LIST = []
 
 
-def Testing(func):
-    test_name = func.__name__
-    if test_name.startswith('test_'):
-        test_name = test_name[5:]
-    TEST_LIST.append((test_name, func))
-    return func
+def Testing(test_name):
+    def decorating_function(func):
+        TEST_LIST.append((test_name, func))
+        return None
+    return decorating_function
 
 
-@Testing
-def test_doctest():
+@Testing('doctest')
+def _():
     TEST_MODS = [
         cxxlookup.expr,
         cxxlookup.groupify,
@@ -140,15 +139,15 @@ def test_doctest():
     return run
 
 
-@Testing
-def test_wcwidth():
+@Testing('wcwidth')
+def _():
     values = [int(unicodedata.east_asian_width(chr(c)) in 'WF') for c
               in range(0x110000)]
     return values
 
 
-@Testing
-def test_misc1():
+@Testing('misc1')
+def _():
     random.seed(0)
 
     # Linear
@@ -219,8 +218,8 @@ def test_misc1():
     return values
 
 
-@Testing
-def test_togb18030():
+@Testing('togb18030')
+def _():
     N = 0x110000
     values = [0] * N
     for k in range(N):
@@ -240,8 +239,8 @@ def test_togb18030():
     return {'values': values, 'opt': cxxlookup.OPT_Os}
 
 
-@Testing
-def test_fromgb18030():
+@Testing('fromgb18030')
+def _():
     def conv(*s):
         try:
             unic = bytes(s).decode('gb18030')

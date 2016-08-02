@@ -2,7 +2,7 @@
 # coding: utf-8
 # vim: set ts=4 sts=4 sw=4 expandtab cc=80:
 
-# Copyright (c) 2014, chys <admin@CHYS.INFO>
+# Copyright (c) 2014, 2016, chys <admin@CHYS.INFO>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -58,7 +58,7 @@ def make_code(base, values, hole, opt):
     for lo, values in sorted(groups.items()):
         range_name = 'X_{:x}_{:x}'.format(lo, lo + values.size)
         expr, subexprs = MakeCodeForRange(
-            lo, values, range_name, opt).make_code()
+            lo, values, range_name, opt).expr_tuple
 
         code, static = _format_code(expr, subexprs)
         codes[lo] = lo + values.size, code
@@ -137,8 +137,8 @@ def _format_code(expr, subexprs):
         for (k, var) in enumerate(var_output_order):
             var_expr = subexprs[var]
             rename_var(var_expr)
-            var_type = var_expr.rettype()
-            while var_expr.IS_CAST and var_expr._type >= var_type:
+            var_type = var_expr.rtype
+            while var_expr.IS_CAST and var_expr.rtype >= var_type:
                 var_expr = var_expr._value
 
             code_str.append('\t\t\t{} {} = {};\n'.format(
@@ -163,12 +163,10 @@ class MakeCodeForRange:
         self._table_name = table_name
         self._opt = opt
 
-        self._expr = None
         self._subexprs = []
 
-    def make_code(self):
-        if self._expr:
-            return self._expr, self._subexprs
+    @utils.cached_property
+    def expr_tuple(self):
         expr = self._make_code(
             self._lo, self._values, self._table_name,
             FixedVar(32, 'c'), FixedVar(64, 'cl'))
@@ -194,20 +192,19 @@ class MakeCodeForRange:
                     8, self._make_subexpr)
 
         # Final optimization: Remove unnecessary explicit cast
-        while expr.IS_CAST and expr._type >= 31:
+        while expr.IS_CAST and expr.rtype >= 31:
             expr = expr._value
 
-        self._expr = expr
         return expr, self._subexprs
 
     def _make_subexpr(self, expr):
         ind = len(self._subexprs)
         self._subexprs.append(expr)
-        return TempVar(expr.rettype(), ind)
+        return TempVar(expr.rtype, ind)
 
     def _make_code(self, lo, values, table_name, inexpr, inexpr_long,
                    addition=0, **kwargs):
-        exprs = [expr.optimize() for expr in
+        exprs = [expr.optimized for expr in
                  self._yield_code(lo, values, table_name, inexpr,
                                   inexpr_long, addition, **kwargs)]
         return min(exprs, key=self._overhead)
@@ -253,10 +250,10 @@ class MakeCodeForRange:
         assert(uniq > 0)
 
         if inexpr is inexpr_long:
-            inexpr = inexpr_long = inexpr.optimize()
+            inexpr = inexpr_long = inexpr.optimized
         else:
-            inexpr = inexpr.optimize()
-            inexpr_long = inexpr_long.optimize()
+            inexpr = inexpr.optimized
+            inexpr_long = inexpr_long.optimized
 
         # Constant
         if uniq == 1:

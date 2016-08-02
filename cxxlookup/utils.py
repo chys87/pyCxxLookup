@@ -2,7 +2,7 @@
 # coding: utf-8
 # vim: set ts=4 sts=4 sw=4 expandtab cc=80:
 
-# Copyright (c) 2014, chys <admin@CHYS.INFO>
+# Copyright (c) 2014, 2016, chys <admin@CHYS.INFO>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -31,6 +31,7 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
+import functools
 import os
 import sys
 
@@ -262,7 +263,7 @@ def np_range(array):
 
 
 def profiling(func):
-
+    @functools.wraps(func)
     def _func(*args, **kwargs):
         # We hope it can be set or unset at run-time, so put the check here
         profiling_setting = os.environ.get('pyCxxLookup_Profiling')
@@ -303,3 +304,19 @@ def profiling(func):
         return res
 
     return _func
+
+
+class cached_property:
+    def __init__(self, func):
+        self.func = func
+        self.__doc__ = func.__doc__
+        self.__name__ = func.__name__
+        self.__module__ = func.__module__
+
+    def __get__(self, obj, cls):
+        if obj is None:
+            return self
+
+        func = self.func
+        res = obj.__dict__[func.__name__] = func(obj)
+        return res

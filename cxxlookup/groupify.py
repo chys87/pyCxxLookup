@@ -2,7 +2,7 @@
 # coding: utf-8
 # vim: set ts=4 sts=4 sw=4 expandtab cc=80:
 
-# Copyright (c) 2014, chys <admin@CHYS.INFO>
+# Copyright (c) 2014, 2016, chys <admin@CHYS.INFO>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -37,19 +37,25 @@ import numpy as np
 from . import utils
 
 
-def __yield_linear_parts(array, linear_threshold, const_threshold):
+def _yield_linear_parts(array, opt):
     '''
     >>> import numpy as np
     >>> a = np.array([1,1,2,3,4,5,5,4,3,2,2,2,2])
-    >>> list(__yield_linear_parts(a, 5, 4))
+    >>> list(_yield_linear_parts(a, (5, 4)))
     [(1, 6), (9, 13)]
     >>> a = np.array([1,1,1,1,2,3,4,5,6,7,8,9,10])
-    >>> list(__yield_linear_parts(a, 5, 4))
+    >>> list(_yield_linear_parts(a, (5, 4)))
     [(0, 4), (4, 13)]
     '''
     L = array.size
     if L < 3:
         return
+
+    try:
+        linear_threshold = opt.linear_threshold
+        const_threshold = opt.const_threshold
+    except AttributeError:
+        linear_threshold, const_threshold = opt
 
     delta = utils.slope_array(array, np.int64)
     unequal = (delta[1:] != delta[:-1]).nonzero()[0].tolist()
@@ -66,12 +72,6 @@ def __yield_linear_parts(array, linear_threshold, const_threshold):
             lo = hi
         else:
             lo = hi - 1
-
-
-def _yield_linear_parts(array, opt):
-    const_threshold = opt.const_threshold
-    linear_threshold = opt.linear_threshold
-    return __yield_linear_parts(array, linear_threshold, const_threshold)
 
 
 def _naive_groupify(base, values, opt):

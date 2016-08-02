@@ -2,7 +2,7 @@
 # coding: utf-8
 # vim: set ts=4 sts=4 sw=4 expandtab cc=80:
 
-# Copyright (c) 2014, chys <admin@CHYS.INFO>
+# Copyright (c) 2014, 2016, chys <admin@CHYS.INFO>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -109,34 +109,28 @@ class Expr(metaclass=ExprMeta):
     def children(self):
         return ()
 
-    def rettype(self):
-        type = max([x.rettype() for x in self.children()])
-        return max(type, 31)  # C type-promotion rule
+    rtype = None
 
-    def optimize(self):
+    @property
+    def optimized(self):
         return self
 
     def walk(self):
         """Recursively visit itself and all children."""
-        stk = [self]
-        stk_pop = stk.pop
-        stk_extend = stk.extend
-        while stk:
-            expr = stk_pop()
-            yield expr
-            stk_extend(expr.children())
+        yield self
+        q = [self]
+        q_pop = q.pop
+        q_extend = q.extend
+        while q:
+            expr = q_pop()
+            children = expr.children()
+            yield from children
+            q_extend(children)
 
     def walk_tempvar(self):
         """Shortcut for filter(lambda x: x.IS_TEMPVAR, self.walk())
         """
-        stk = [self]
-        stk_pop = stk.pop
-        stk_extend = stk.extend
-        while stk:
-            expr = stk_pop()
-            if expr.IS_TEMPVAR:
-                yield expr
-            stk_extend(expr.children())
+        return (x for x in self.walk() if x.IS_TEMPVAR)
 
     def _complicated(self, threshold):
         for expr in self.walk():
@@ -152,10 +146,7 @@ class Expr(metaclass=ExprMeta):
 
 class ExprVar(Expr):
     def __init__(self, type):
-        self._type = type
-
-    def rettype(self):
-        return self._type
+        self.rtype = type
 
 
 class ExprFixedVar(ExprVar):
@@ -171,19 +162,23 @@ class ExprTempVar(ExprVar):
     _name_cache = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ')
 
     def __init__(self, type, var):
-        self._type = type
+        super().__init__(type)
         self._var = var
 
     @classmethod
     def get_name(cls, var):
+        '''
+        >>> list(map(ExprTempVar.get_name, (0, 26, 52)))
+        ['A', 'AA', 'BA']
+        '''
         cache = cls._name_cache
-        CL = len(cache)
-        if var < CL:
+        try:
             s = cache[var]
-            if s:
-                return s
+        except IndexError:
+            cache += [None] * (var + 1 - len(cache))
         else:
-            cache += [None] * (var + 1 - CL)
+            if s is not None:
+                return s
 
         length = 1
         expressible = 26
@@ -207,7 +202,7 @@ class ExprTempVar(ExprVar):
 
 class ExprConst(Expr):
     def __init__(self, type, value):
-        self._type = type
+        self.rtype = type
         self._value = value
 
     def __str__(self):
@@ -215,17 +210,14 @@ class ExprConst(Expr):
             value_s = str(self._value)
         else:
             value_s = hex(self._value)
-        if self._type < 64:
+        if self.rtype < 64:
             return value_s + 'u'
         else:
             return 'UINT64_C({})'.format(value_s)
 
-    def rettype(self):
-        return self._type
-
     def _complicated(self, threshold):
         # Always assign 64-bit constant to a variable for readability.
-        return (self._type == 64)
+        return (self.rtype == 64)
 
     @staticmethod
     def combine(const_exprs):
@@ -234,7 +226,7 @@ class ExprConst(Expr):
         const_type = 32
         for expr in const_exprs:
             const_value += expr._value
-            const_type = max(const_type, expr._type)
+            const_type = max(const_type, expr.rtype)
         if const_value == 0:
             return None
         else:
@@ -246,7 +238,6 @@ class ExprAdd(Expr):
         assert const is None or const.IS_CONST
         self._exprs = tuple(exprs)
         self._const = const
-        self._optimized = False
 
     def __str__(self):
         res = ' + '.join(map(str, self._exprs))
@@ -255,7 +246,7 @@ class ExprAdd(Expr):
             if const_value >= 0:
                 res += ' + ' + str(self._const)
             else:
-                res += ' - ' + str(ExprConst(self._const._type,
+                res += ' - ' + str(ExprConst(self._const.rtype,
                                              -const_value))
         return '(' + res + ')'
 
@@ -266,10 +257,13 @@ class ExprAdd(Expr):
         else:
             return self._exprs
 
-    def optimize(self):
-        if self._optimized:
-            return self
+    @utils.cached_property
+    def rtype(self):
+        rtype = max([x.rtype for x in self.children()])
+        return max(rtype, 31)  # C type-promotion rule
 
+    @utils.cached_property
+    def optimized(self):
         exprs = []
         const_exprs = []
 
@@ -277,7 +271,7 @@ class ExprAdd(Expr):
             const_exprs.append(self._const)
 
         for expr in self._exprs:
-            expr = expr.optimize()
+            expr = expr.optimized
             if expr.IS_ADD:
                 exprs.extend(expr._exprs)
                 if expr._const:
@@ -293,7 +287,6 @@ class ExprAdd(Expr):
         if len(self._exprs) == 1 and not self._const:
             return self._exprs[0]
 
-        self._optimized = True
         return self
 
     def replace_complicated_subexpressions(self, threshold, callback):
@@ -313,18 +306,19 @@ class ExprBinary(Expr):
     def __init__(self, left, right):
         self._left = left
         self._right = right
-        self._optimized = False
 
     def children(self):
         return self._left, self._right
 
-    def optimize(self):
-        self._left = self._left.optimize()
-        self._right = self._right.optimize()
+    @utils.cached_property
+    def optimized(self):
+        self._left = self._left.optimized
+        self._right = self._right.optimized
         return self
 
-    def rettype(self):
-        return max(31, self._left.rettype(), self._right.rettype())
+    @property
+    def rtype(self):
+        return max(31, self._left.rtype, self._right.rtype)
 
     def replace_complicated_subexpressions(self, threshold, callback):
         super().replace_complicated_subexpressions(threshold, callback)
@@ -335,8 +329,9 @@ class ExprBinary(Expr):
 
 
 class ExprShift(ExprBinary):
-    def rettype(self):
-        return max(31, self._left.rettype())
+    @property
+    def rtype(self):
+        return max(31, self._left.rtype)
 
 
 class ExprLShift(ExprShift):
@@ -350,17 +345,15 @@ class ExprLShift(ExprShift):
         else:
             return '({} << {})'.format(self._left, right)
 
-    def optimize(self):
-        if self._optimized:
-            return self
-
-        self._left = left = self._left.optimize()
-        self._right = right = self._right.optimize()
+    @utils.cached_property
+    def optimized(self):
+        self._left = left = self._left.optimized
+        self._right = right = self._right.optimized
 
         right_const = right.IS_CONST
 
         if right_const and left.IS_CONST:
-            return ExprConst(self.rettype(), left._value << right._value)
+            return ExprConst(self.rtype, left._value << right._value)
 
         # "(a & c1) << c2" ==> (a << c2) & (c1 << c2) (where c2 <= 3)
         # This takes advantage of x86's LEA instruction
@@ -368,9 +361,9 @@ class ExprLShift(ExprShift):
                 left.IS_AND and \
                 left._right.IS_CONST:
             expr_left = ExprLShift(left._left, right)
-            expr_right = ExprConst(left._right._type,
+            expr_right = ExprConst(left._right.rtype,
                                    left._right._value << right._value)
-            return ExprAnd(expr_left, expr_right).optimize()
+            return ExprAnd(expr_left, expr_right).optimized
 
         # (cond ? c1 : c2) << c3 ==> (cond ? c1 << c3 : c2 << c3)
         if right_const and \
@@ -380,7 +373,7 @@ class ExprLShift(ExprShift):
             expr = ExprCond(left._cond,
                             ExprLShift(left._exprT, right),
                             ExprLShift(left._exprF, right))
-            return expr.optimize()
+            return expr.optimized
 
         # (a >> c1) << c2
         # (a << (c2 - c1)) & ~((1 << c2) - 1)   (c2 > c1)
@@ -396,20 +389,19 @@ class ExprLShift(ExprShift):
                 expr = left._left
             else:
                 expr = ExprRShift(left._left, ExprConst(32, c1 - c2))
-            and_value = ((1 << c2) - 1) ^ ((1 << expr.rettype()) - 1)
-            expr = ExprAnd(expr, Const(expr.rettype(), and_value))
-            return expr.optimize()
+            and_value = ((1 << c2) - 1) ^ ((1 << expr.rtype) - 1)
+            expr = ExprAnd(expr, Const(expr.rtype, and_value))
+            return expr.optimized
 
         # "(a + c1) << c2" ==> (a << c2) + (c1 << c2)
         if right_const and \
                 left.IS_ADD and len(left._exprs) == 1 and \
                 left._const:
             expr_left = ExprLShift(left._exprs[0], right)
-            expr_right = ExprConst(left._const._type,
+            expr_right = ExprConst(left._const.rtype,
                                    left._const._value << right._value)
-            return ExprAdd((expr_left,), expr_right).optimize()
+            return ExprAdd((expr_left,), expr_right).optimized
 
-        self._optimized = True
         return self
 
 
@@ -417,7 +409,7 @@ class ExprRShift(ExprShift):
     def __init__(self, left, right):
         super().__init__(left, right)
         # Always logical shift
-        assert left.rettype() in (8, 16, 32, 64)
+        assert left.rtype in (8, 16, 32, 64)
 
     def __str__(self):
         # Avoid the spurious 'u' after the constant
@@ -428,27 +420,25 @@ class ExprRShift(ExprShift):
 
         return '({} >> {})'.format(self._left, right_s)
 
-    def optimize(self):
+    @utils.cached_property
+    def optimized(self):
         '''
         >>> expr = RShift(Add(FixedVar(32, 'c'), 30), 2)
-        >>> str(expr.optimize())
+        >>> str(expr.optimized)
         '(((c + 2u) >> 2) + 7u)'
         >>> expr = RShift(Add(FixedVar(32, 'c'), FixedVar(32, 'd'), -30), 2)
-        >>> str(expr.optimize())
+        >>> str(expr.optimized)
         '(((c + d + 2u) >> 2) - 8u)'
         '''
-        if self._optimized:
-            return self
-
-        self._left = left = self._left.optimize()
-        self._right = right = self._right.optimize()
+        self._left = left = self._left.optimized
+        self._right = right = self._right.optimized
 
         right_const = right.IS_CONST
 
         # (a + c1) >> c2
         # Convert to ((a + c1 % (1 << c2)) >> c2) + (c1 >> c2).
         if right_const and left.IS_ADD and left._const:
-            ctype = left._const._type
+            ctype = left._const.rtype
             c1 = left._const._value
             c2 = right._value
 
@@ -459,16 +449,15 @@ class ExprRShift(ExprShift):
                 expr = ExprAdd(left._exprs, ExprConst(ctype, remainder))
                 expr = ExprRShift(expr, ExprConst(32, c2))
                 expr = ExprAdd((expr,), ExprConst(ctype, c1 >> c2))
-                return expr.optimize()
+                return expr.optimized
 
         # (a >> c1) >> c2 ==> a >> (c1 + c2)
         if right_const and \
                 left.IS_RSHIFT and \
                 left._right.IS_CONST:
-            self._right = right = Add(right, left._right).optimize()
+            self._right = right = Add(right, left._right).optimized
             self._left = left = left._left
 
-        self._optimized = True
         return self
 
 
@@ -476,18 +465,16 @@ class ExprMul(ExprBinary):
     def __str__(self):
         return '{} * {}'.format(self._left, self._right)
 
-    def optimize(self):
-        if self._optimized:
-            return self
-
-        self._left = left = self._left.optimize()
-        self._right = right = self._right.optimize()
+    @utils.cached_property
+    def optimized(self):
+        self._left = left = self._left.optimized
+        self._right = right = self._right.optimized
 
         right_const = right.IS_CONST
 
         # Both constants
         if right_const and left.IS_CONST:
-            return ExprConst(self.rettype(),
+            return ExprConst(self.rtype,
                              left._value * right._value)
 
         # Put constant on the right side
@@ -501,7 +488,7 @@ class ExprMul(ExprBinary):
                 left._const:
             expr_left = ExprMul(left._exprs[0], right)
             expr_right = ExprMul(left._const, right)
-            return ExprAdd((expr_left, expr_right), None).optimize()
+            return ExprAdd((expr_left, expr_right), None).optimized
 
         # (cond ? c1 : c2) * c3 ==> (cond ? c1 * c3 : c2 * c3)
         if right_const and \
@@ -511,7 +498,7 @@ class ExprMul(ExprBinary):
             expr = ExprCond(left._cond,
                             Mul(left._exprT, right),
                             Mul(left._exprF, right))
-            return expr.optimize()
+            return expr.optimized
 
         # Strength reduction (* => <<)
         if right_const:
@@ -522,9 +509,8 @@ class ExprMul(ExprBinary):
                 return left
             elif (rv > 0) and (rv & (rv - 1)) == 0:  # Power of 2
                 expr = ExprLShift(left, ExprConst(32, rv.bit_length() - 1))
-                return expr.optimize()
+                return expr.optimized
 
-        self._optimized = True
         return self
 
 
@@ -532,10 +518,8 @@ class ExprAnd(ExprBinary):
     def __str__(self):
         return '({} & {})'.format(self._left, self._right)
 
-    def optimize(self):
-        if self._optimized:
-            return self
-
+    @utils.cached_property
+    def optimized(self):
         left = self._left
         right = self._right
 
@@ -543,11 +527,11 @@ class ExprAnd(ExprBinary):
         right_value = None
 
         if right_const:
-            self._left = left = left.optimize()
+            self._left = left = left.optimized
             right_value = right._value
         else:
-            self._left = left = left.optimize()
-            self._right = right = right.optimize()
+            self._left = left = left.optimized
+            self._right = right = right.optimized
 
         # (a + c1) & c2 ==> (a + c1') & c2
         # where c1' = c1 with high bits cleared
@@ -561,8 +545,8 @@ class ExprAnd(ExprBinary):
             if c1p & (1 << (bt - 1)):
                 c1p |= ~((1 << bt) - 1)
             if c1p != c1:
-                left = ExprAdd(left._exprs, ExprConst(left._const._type, c1p))
-                self._left = left = left.optimize()
+                left = ExprAdd(left._exprs, ExprConst(left._const.rtype, c1p))
+                self._left = left = left.optimized
 
         # (a & c1) & c2 ==> a & (c1 & c2)
         if right_const and \
@@ -571,21 +555,20 @@ class ExprAnd(ExprBinary):
             c1 = left._right._value
             c2 = right_value
             expr = ExprAnd(left._left,
-                           Const(max(left._right._type, right._type), c1 & c2))
-            return expr.optimize()
+                           Const(max(left._right.rtype, right.rtype), c1 & c2))
+            return expr.optimized
 
         # (a & 0xff) ==> (uint8_t)a
         # (a & 0xffff) ==> (uint16_t)a
         if right_const:
             # Must cast back
             if right_value == 0xff:
-                expr = ExprCast(self.rettype(), ExprCast(8, left))
-                return expr.optimize()
+                expr = ExprCast(self.rtype, ExprCast(8, left))
+                return expr.optimized
             elif right_value == 0xffff:
-                expr = ExprCast(self.rettype(), ExprCast(16, left))
-                return expr.optimize()
+                expr = ExprCast(self.rtype, ExprCast(16, left))
+                return expr.optimized
 
-        self._optimized = True
         return self
 
 
@@ -597,15 +580,12 @@ class ExprCompare(ExprBinary):
     def __str__(self):
         return '({} {} {})'.format(self._left, self._compare, self._right)
 
-    def rettype(self):
-        return 31
+    rtype = 31
 
-    def optimize(self):
-        if self._optimized:
-            return self
-
-        self._left = left = self._left.optimize()
-        self._right = right = self._right.optimize()
+    @utils.cached_property
+    def optimized(self):
+        self._left = left = self._left.optimized
+        self._right = right = self._right.optimized
 
         right_const = right.IS_CONST
 
@@ -614,62 +594,55 @@ class ExprCompare(ExprBinary):
         # unsinged(a - (c2 << c1)) < (1 << c1)
         if right_const and self._compare == '==' and \
                 left.IS_RSHIFT and \
-                left._left.rettype() == 32 and \
+                left._left.rtype == 32 and \
                 left._right.IS_CONST and \
-                right._type == 32:
+                right.rtype == 32:
             c1 = left._right._value
             c2 = right._value
             if ((c2 + 1) << c1) <= 2**32:
                 expr = ExprAdd((left._left,), ExprConst(32, -(c2 << c1)))
                 expr = ExprCompare(expr, '<', ExprConst(32, 1 << c1))
-                return expr.optimize()
+                return expr.optimized
 
         # (a >> c1) < c2
         # a < (c2 << c1)
         if right_const and self._compare == '<' and \
                 left.IS_RSHIFT and \
-                left._left.rettype() == 32 and \
+                left._left.rtype == 32 and \
                 left._right.IS_CONST and \
-                right._type == 32:
+                right.rtype == 32:
             c1 = left._right._value
             c2 = right._value
             if (c2 << c1) < 2**32:
                 expr = ExprCompare(left._left, '<', ExprConst(32, c2 << c1))
-                return expr.optimize()
+                return expr.optimized
 
-        self._optimized = True
         return self
 
 
 class ExprCast(Expr):
     def __init__(self, type, value):
-        self._type = type
+        self.rtype = type
         self._value = value
         self._optimized = False
 
     def __str__(self):
-        return '{}({})'.format(type_name(self._type),
+        return '{}({})'.format(type_name(self.rtype),
                                utils.trim_brackets(str(self._value)))
 
     def children(self):
         return self._value,
 
-    def rettype(self):
-        return self._type
+    @utils.cached_property
+    def optimized(self):
+        self._value = value = self._value.optimized
 
-    def optimize(self):
-        if self._optimized:
-            return self
-
-        self._value = value = self._value.optimize()
-
-        if value.rettype() == self._type:
+        if value.rtype == self.rtype:
             return value
 
-        if value.IS_CAST and self._type <= value._type:
-            return ExprCast(self._type, value._value).optimize()
+        if value.IS_CAST and self.rtype <= value.rtype:
+            return ExprCast(self.rtype, value._value).optimized
 
-        self._optimized = True
         return self
 
 
@@ -686,22 +659,22 @@ class ExprCond(Expr):
     def children(self):
         return self._cond, self._exprT, self._exprF
 
-    def rettype(self):
+    @property
+    def rtype(self):
         # FIXME: What does C standard say about this?
-        return max(31, self._exprT.rettype(), self._exprF.rettype())
+        return max(31, self._exprT.rtype, self._exprF.rtype)
 
-    def optimize(self):
-        if not self._optimized:
-            self._cond = self._cond.optimize()
-            self._exprT = self._exprT.optimize()
-            self._exprF = self._exprF.optimize()
-            self._optimized = True
+    @utils.cached_property
+    def optimized(self):
+        self._cond = self._cond.optimized
+        self._exprT = self._exprT.optimized
+        self._exprF = self._exprF.optimized
         return self
 
 
 class ExprTable(Expr):
     def __init__(self, type, name, values, var, offset):
-        self._type = type
+        self.rtype = type
         self._name = name
         self._values = values
         self._var = var
@@ -713,7 +686,7 @@ class ExprTable(Expr):
             # Add an extra 'l' so that the constant is absorbed by the
             # address of the array
             offset_s = '{:#x}'.format(self._offset)
-            if self._var.rettype() < 63:
+            if self._var.rtype < 63:
                 offset_s += 'l'
             return '{}[{} - {}]'.format(
                 self._name, self._var, offset_s)
@@ -731,7 +704,7 @@ class ExprTable(Expr):
 
         if _speedups:
             c_array = _speedups.format_c_array(
-                self._values, self._type, self._name)
+                self._values, self.rtype, self._name)
             if c_array is not None:
                 return var_statics + c_array
 
@@ -748,7 +721,7 @@ class ExprTable(Expr):
         value_format = ' {{:#0{}x}},'.format(maxlen).format
 
         line = 'const {} {}[{:#x}] = {{'.format(
-            type_name(self._type), self._name, self._values.size)
+            type_name(self.rtype), self._name, self._values.size)
         for i, v in enumerate(self._values):
             if not (i & 7):
                 res_append(line + '\n')
@@ -758,25 +731,20 @@ class ExprTable(Expr):
         res_append('};\n\n')
         return ''.join(res)
 
-    def rettype(self):
-        return self._type
-
     def children(self):
         return self._var,
 
-    def optimize(self):
-        if self._optimized:
-            return self
-        self._var = self._var.optimize()
+    @utils.cached_property
+    def optimized(self):
+        self._var = self._var.optimized
         # Absorb constants into offset
         if self._var.IS_ADD and self._var._const:
             self._offset -= self._var._const._value
-            self._var = ExprAdd(self._var._exprs, None).optimize()
-        self._optimized = True
+            self._var = ExprAdd(self._var._exprs, None).optimized
         return self
 
     def table_bytes(self):
-        return self._values.size * type_bytes(self._type)
+        return self._values.size * type_bytes(self.rtype)
 
     def replace_complicated_subexpressions(self, threshold, callback):
         super().replace_complicated_subexpressions(threshold, callback)
@@ -830,9 +798,9 @@ def LShift(left, right):
 def RShift(left, right):
     # Promote left
     left = exprize(left)
-    if left.rettype() < 32:
+    if left.rtype < 32:
         left = ExprCast(32, left)
-    elif left.rettype() == 63:
+    elif left.rtype == 63:
         left = ExprCast(64, left)
     return ExprRShift(left, exprize(right))
 
