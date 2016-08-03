@@ -334,6 +334,34 @@ class MakeCodeForRange:
                 yield expr
                 return
 
+        # Has long constant prefix or suffix.
+        # Frequently resulting from bitvec or lo/hi partition
+        if uniq >= 3 and num > self._opt.const_threshold:
+            threshold = max(self._opt.const_threshold, num // 3)
+            const_prefix_len = utils.const_range(values)
+            if const_prefix_len >= threshold:
+                split_pos = const_prefix_len
+                comp_expr = Compare(inexpr, '<', Const(32, lo + split_pos))
+                left_expr = Const(32, int(values[0]) + addition)
+                right_expr = self._make_code(
+                    lo + split_pos, values[split_pos:],
+                    table_name + '_r',
+                    inexpr, inexpr_long,
+                    addition=addition)
+                yield Cond(comp_expr, left_expr, right_expr)
+            else:
+                const_suffix_len = utils.const_range(values[::-1])
+                if const_suffix_len >= threshold:
+                    split_pos = num - const_suffix_len
+                    comp_expr = Compare(inexpr, '<', Const(32, lo + split_pos))
+                    left_expr = self._make_code(
+                        lo, values[:split_pos],
+                        table_name + '_l',
+                        inexpr, inexpr_long,
+                        addition=addition)
+                    right_expr = Const(32, int(values[-1]) + addition)
+                    yield Cond(comp_expr, left_expr, right_expr)
+
         # Can we pack them into one 64-bit integer?
         if num * maxv_bits <= 64:
             offset = 0
