@@ -267,9 +267,9 @@ class MakeCodeForRange:
                 if c0 == 0:
                     yield inexpr
                 else:
-                    yield Add(inexpr, Const(32, c0))
+                    yield inexpr + c0
             elif c0 == 0 and (c1 & (c1 - 1)) == 0:
-                yield LShift(inexpr, Const(32, c1.bit_length() - 1))
+                yield inexpr << Const(32, c1.bit_length() - 1)
             else:
                 yield Cond(inexpr, c1, c0)
             return
@@ -278,12 +278,12 @@ class MakeCodeForRange:
         if (uniq == num) and utils.is_linear(values):
             slope = int(values[1]) - int(values[0])
             # (c - lo) * slope + addition
-            expr = Add(inexpr, -lo)
+            expr = inexpr - lo
             if slope != 1:
-                expr = Mul(expr, slope)
+                expr = expr * slope
             add = int(values[0]) + addition
             if add:
-                expr = Add(expr, add)
+                expr = expr + add
             yield expr
             return
 
@@ -293,15 +293,15 @@ class MakeCodeForRange:
             rk = utils.const_range(values[::-1])
             if k + rk == num:  # [a,...,a,b,...,b]
                 if k == 1:
-                    yield Cond(Compare(inexpr, '==', lo),
+                    yield Cond(inexpr == lo,
                                values[0] + addition,
                                values[-1] + addition)
                 elif rk == 1:
-                    yield Cond(Compare(inexpr, '==', lo + k),
+                    yield Cond(inexpr == lo + k,
                                values[-1] + addition,
                                values[0] + addition)
                 else:
-                    yield Cond(Compare(inexpr, '<', lo + k),
+                    yield Cond(inexpr < lo + k,
                                values[0] + addition,
                                values[-1] + addition)
                 return
@@ -310,10 +310,10 @@ class MakeCodeForRange:
                 # [a, ..., a, b, ..., b, a, ..., a]
                 bcount = num - rk - k
                 if bcount == 1:
-                    cond = Compare(inexpr, '==', lo + k)
+                    cond = (inexpr == lo + k)
                 else:
-                    subinexpr = Cast(32, Add(inexpr, -lo - k))
-                    cond = Compare(subinexpr, '<', bcount)
+                    subinexpr = Cast(32, inexpr - (lo + k))
+                    cond = (subinexpr < bcount)
                 yield Cond(cond, values[k] + addition, values[0] + addition)
                 return
 
@@ -325,8 +325,7 @@ class MakeCodeForRange:
                     mask |= 1 << int(k)
 
                 Bits = 64 if num > 32 else 32
-                expr = And(RShift(Const(Bits, mask), Add(inexpr, -lo)),
-                           Const(32, 1))
+                expr = (Const(Bits, mask) >> (inexpr - lo)) & Const(32, 1)
                 if (value1 + addition != 1) or (value0 + addition != 0):
                     expr = Cond(expr, value1 + addition, value0 + addition)
                 elif Bits > 32:
@@ -341,7 +340,7 @@ class MakeCodeForRange:
             const_prefix_len = utils.const_range(values)
             if const_prefix_len >= threshold:
                 split_pos = const_prefix_len
-                comp_expr = Compare(inexpr, '<', Const(32, lo + split_pos))
+                comp_expr = (inexpr < Const(32, lo + split_pos))
                 left_expr = Const(32, int(values[0]) + addition)
                 right_expr = self._make_code(
                     lo + split_pos, values[split_pos:],
@@ -353,7 +352,7 @@ class MakeCodeForRange:
                 const_suffix_len = utils.const_range(values[::-1])
                 if const_suffix_len >= threshold:
                     split_pos = num - const_suffix_len
-                    comp_expr = Compare(inexpr, '<', Const(32, lo + split_pos))
+                    comp_expr = (inexpr < Const(32, lo + split_pos))
                     left_expr = self._make_code(
                         lo, values[:split_pos],
                         table_name + '_l',
@@ -381,12 +380,11 @@ class MakeCodeForRange:
             mask = 0
             for k, v in enumerate(values):
                 mask |= (int(v) + offset) << (k * bits)
-            expr = Mul(Add(inexpr, -lo), bits)
-            expr = And(Cast(32, RShift(Const(Bits, mask), expr)),
-                       (1 << bits) - 1)
+            expr = (inexpr - lo) * bits
+            expr = Cast(32, Const(Bits, mask) >> expr) & ((1 << bits) - 1)
             add = addition - offset
             if add:
-                expr = ExprAdd((expr,), ExprConst(32, add))
+                expr = expr + add
             yield expr
             return
 
@@ -416,8 +414,7 @@ class MakeCodeForRange:
                                            uniqs=reduced_uniqs,
                                            skip_almost_linear_reduce=True)
 
-                    # inexpr * slope + expr
-                    yield Add(Mul(subexpr, slope), expr)
+                    yield subexpr * slope + expr
 
         # Two-level lookup?
         if maxv > num > uniq * 4 // 3:
@@ -442,15 +439,15 @@ class MakeCodeForRange:
 
             subexpr, _ = self._smart_subexpr(inexpr, inexpr_long)
 
-            expr = Add(subexpr, -lo)
+            expr = subexpr - lo
             # (table[expr/2] >> (expr%2*4)) & 15
-            expr_shift = RShift(expr, 1)
+            expr_shift = expr >> 1
             expr_left = self._make_code(0, compressed_values,
                                         table_name + '_4bits',
                                         expr_shift, expr_shift)
-            expr_right = LShift(And(expr, 1), 2)
-            expr = And(RShift(expr_left, expr_right), 15)
-            expr = Add(expr, addition - offset)
+            expr_right = (expr & 1) << 2
+            expr = (expr_left >> expr_right) & 15
+            expr = expr + (addition - offset)
             yield expr
             return
 
@@ -460,15 +457,15 @@ class MakeCodeForRange:
 
             subexpr, _ = self._smart_subexpr(inexpr, inexpr_long)
 
-            expr = Add(subexpr, -lo)
+            expr = subexpr - lo
             # (table[expr/4] >> (expr%4*2)) & 3
-            expr_shift = RShift(expr, 2)
+            expr_shift = expr >> 2
             expr_left = self._make_code(0, compressed_values,
                                         table_name + '_2bits',
                                         expr_shift, expr_shift)
-            expr_right = LShift(And(expr, 3), 1)
-            expr = And(RShift(expr_left, expr_right), 3)
-            expr = Add(expr, addition)
+            expr_right = (expr & 3) << 1
+            expr = (expr_left >> expr_right) & 3
+            expr = expr + addition
             yield expr
             return
 
@@ -478,15 +475,15 @@ class MakeCodeForRange:
 
             subexpr, _ = self._smart_subexpr(inexpr, inexpr_long)
 
-            expr = Add(subexpr, -lo)
+            expr = subexpr - lo
             # (table[expr/8] >> (expr%8)) & 1
-            expr_shift = RShift(expr, 3)
+            expr_shift = expr >> 3
             expr_left = self._make_code(0, compressed_values,
                                         table_name + '_bitvec',
                                         expr_shift, expr_shift)
-            expr_right = And(expr, 7)
-            expr = And(RShift(expr_left, expr_right), 1)
-            expr = Add(expr, addition)
+            expr_right = expr & 7
+            expr = (expr_left >> expr_right) & 1
+            expr = expr + addition
             yield expr
             return
 
@@ -499,7 +496,7 @@ class MakeCodeForRange:
                 expr = self._make_code(lo, reduced_values, table_name + '_gcd',
                                        inexpr, inexpr_long,
                                        skip_gcd_reduce=True)
-                yield Add(Mul(expr, gcd), addition + offset)
+                yield expr * gcd + (addition + offset)
 
         # Try splitting the data into low and high parts
         for k in (4, 8, 16):
@@ -556,7 +553,7 @@ class MakeCodeForRange:
                 lo, hi_values, '{}_{}hi'.format(table_name, k),
                 subexpr, subexpr_long,
                 uniqs=hi_uniqs, skip_compress_4bits=(k == 4))
-            yield Add(lo_expr, Mul(hi_expr, hi_gcd))
+            yield lo_expr + hi_expr * hi_gcd
 
             if hi_uniq <= 2:  # No reason to continue trying
                 break
@@ -569,7 +566,7 @@ class MakeCodeForRange:
         else:
             expr = Table(table_type, table_name, values, inexpr_long, lo)
             if addition != 0:
-                expr = Add(expr, addition)
+                expr = expr + addition
         yield expr
 
     def _smart_subexpr(self, expr, expr_long):

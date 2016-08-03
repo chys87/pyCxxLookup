@@ -143,6 +143,55 @@ class Expr(metaclass=ExprMeta):
         for subexpr in self.children():
             subexpr.replace_complicated_subexpressions(threshold, callback)
 
+    def __add__(self, r):
+        return Add(self, r)
+
+    def __mul__(self, r):
+        return ExprMul(self, exprize(r))
+
+    def __sub__(self, r):
+        r = exprize(r)
+        if not r.IS_CONST:
+            return NotImplemented
+        return Add(self, -r)
+
+    def __and__(self, r):
+        return ExprAnd(self, exprize(r))
+
+    def __lshift__(self, r):
+        return ExprLShift(self, exprize(r))
+
+    def __rshift__(self, r):
+        return RShift(self, r)
+
+    def __rlshift__(self, r):
+        return ExprLShift(exprize(r), self)
+
+    def __rrshift__(self, r):
+        return ExprRShift(exprize(r), self)
+
+    def __eq__(self, r):
+        return ExprCompare(self, '==', exprize(r))
+
+    def __ne__(self, r):
+        return ExprCompare(self, '!=', exprize(r))
+
+    def __lt__(self, r):
+        return ExprCompare(self, '<', exprize(r))
+
+    def __le__(self, r):
+        return ExprCompare(self, '<=', exprize(r))
+
+    def __gt__(self, r):
+        return ExprCompare(self, '>', exprize(r))
+
+    def __ge__(self, r):
+        return ExprCompare(self, '>=', exprize(r))
+
+    __radd__ = __add__
+    __rmul__ = __mul__
+    __rand__ = __and__
+
 
 class ExprVar(Expr):
     def __init__(self, type):
@@ -231,6 +280,9 @@ class ExprConst(Expr):
             return None
         else:
             return ExprConst(const_type, const_value)
+
+    def __neg__(self):
+        return ExprConst(self.rtype, -self._value)
 
 
 class ExprAdd(Expr):
@@ -661,7 +713,6 @@ class ExprCond(Expr):
 
     @property
     def rtype(self):
-        # FIXME: What does C standard say about this?
         return max(31, self._exprT.rtype, self._exprF.rtype)
 
     @utils.cached_property
@@ -791,10 +842,6 @@ def Add(*in_exprs):
         return ExprAdd(exprs, const_expr)
 
 
-def LShift(left, right):
-    return ExprLShift(exprize(left), exprize(right))
-
-
 def RShift(left, right):
     # Promote left
     left = exprize(left)
@@ -807,14 +854,6 @@ def RShift(left, right):
 
 def Mul(left, right):
     return ExprMul(exprize(left), exprize(right))
-
-
-def And(left, right):
-    return ExprAnd(exprize(left), exprize(right))
-
-
-def Compare(left, compare, right):
-    return ExprCompare(exprize(left), compare, exprize(right))
 
 
 def Cast(type, value):
