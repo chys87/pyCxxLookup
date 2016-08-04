@@ -103,7 +103,7 @@ def _format_code(expr, subexprs):
 
         # Depth-first search
         for x in expr.walk_tempvar():
-            var_id = x._var
+            var_id = x.var
             var_id_mask = 1 << var_id
             if not (added_var & var_id_mask):
                 var_expr = subexprs[var_id]
@@ -122,12 +122,13 @@ def _format_code(expr, subexprs):
     else:
         # Rename temporary variables
         rename_map = {var: k for (k, var) in enumerate(var_output_order)}
+        renamed_set = set()
 
         def rename_var(expr):
             for x in expr.walk_tempvar():
-                if not getattr(x, '_var_renamed', False):
-                    x._var_renamed = True
-                    x._var = rename_map[x._var]
+                if id(x) not in renamed_set:
+                    renamed_set.add(id(x))
+                    x.var = rename_map[x.var]
 
         rename_var(expr)
 
@@ -139,7 +140,7 @@ def _format_code(expr, subexprs):
             rename_var(var_expr)
             var_type = var_expr.rtype
             while var_expr.IS_CAST and var_expr.rtype >= var_type:
-                var_expr = var_expr._value
+                var_expr = var_expr.value
 
             code_str.append('\t\t\t{} {} = {};\n'.format(
                 type_name(var_type), ExprTempVar.get_name(k),
@@ -159,7 +160,7 @@ def _format_code(expr, subexprs):
 class MakeCodeForRange:
     def __init__(self, lo, values, table_name, opt):
         self._lo = lo
-        self._values = values
+        self.values = values
         self._table_name = table_name
         self._opt = opt
 
@@ -168,7 +169,7 @@ class MakeCodeForRange:
     @utils.cached_property
     def expr_tuple(self):
         expr = self._make_code(
-            self._lo, self._values, self._table_name,
+            self._lo, self.values, self._table_name,
             FixedVar(32, 'c'), FixedVar(64, 'cl'))
 
         # Find reachable subexpressions
@@ -177,7 +178,7 @@ class MakeCodeForRange:
         while to_visit:
             x = to_visit.pop()
             for subexpr in x.walk_tempvar():
-                subexpr_var_id = subexpr._var
+                subexpr_var_id = subexpr.var
                 mask = 1 << subexpr_var_id
                 if not (reachable & mask):
                     reachable |= mask
@@ -193,7 +194,7 @@ class MakeCodeForRange:
 
         # Final optimization: Remove unnecessary explicit cast
         while expr.IS_CAST and expr.rtype >= 31:
-            expr = expr._value
+            expr = expr.value
 
         return expr, self._subexprs
 
@@ -213,7 +214,9 @@ class MakeCodeForRange:
                     addition=0,
                     uniqs=None, skip_gcd_reduce=False,
                     skip_almost_linear_reduce=False,
-                    skip_compress_4bits=False):
+                    skip_compress_4bits=False, *,
+                    int=int, np=np, utils=utils, Const=Const, Cast=Cast,
+                    Cond=Cond):
         """
         Everything in values must be positive; addition may be negative.
         The final result has type uint32_t even if it may be negative.
@@ -588,15 +591,15 @@ class MakeCodeForRange:
             return True
         # Var >> const, Var << const
         if expr.IS_SHIFT and \
-                expr._left.IS_VAR and \
-                expr._right.IS_CONST:
+                expr.left.IS_VAR and \
+                expr.right.IS_CONST:
             return True
         # (Var - const) >> const
         if expr.IS_RSHIFT and \
-                expr._left.IS_ADD and \
-                len(expr._left._exprs) == 1 and \
-                expr._left._exprs[0].IS_VAR and \
-                expr._right.IS_CONST:
+                expr.left.IS_ADD and \
+                len(expr.left._exprs) == 1 and \
+                expr.left._exprs[0].IS_VAR and \
+                expr.right.IS_CONST:
             return True
         return False
 
@@ -610,17 +613,22 @@ class MakeCodeForRange:
 
         visited_subexprs = 0
         to_scan_list = [expr]
+
+        pop = to_scan_list.pop
+        append = to_scan_list.append
+        subexprs = self._subexprs
+
         while to_scan_list:
-            expr = to_scan_list.pop()
+            expr = pop()
 
             for x in expr.walk():
                 if x.IS_VAR:
                     if x.IS_TEMPVAR:
-                        var_id = x._var
+                        var_id = x.var
                         mask = 1 << var_id
                         if not (visited_subexprs & mask):
                             visited_subexprs |= mask
-                            to_scan_list.append(self._subexprs[var_id])
+                            append(subexprs[var_id])
                 elif x.IS_TABLE:
                     total_bytes += x.table_bytes()
                     extra += 2

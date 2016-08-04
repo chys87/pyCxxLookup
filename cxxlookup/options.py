@@ -33,6 +33,8 @@
 
 
 class Options:
+    __slots__ = ('linear_threshold', 'const_threshold', 'hole_threshold',
+                 'split_threshold', 'group_threshold', 'overhead_multiply')
     def __init__(self,
                  linear_threshold,
                  const_threshold,
