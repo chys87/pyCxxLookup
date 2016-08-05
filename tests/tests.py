@@ -40,12 +40,24 @@ import sys
 import tempfile
 import unicodedata
 
-import cxxlookup
+
+def import_cxxlookup():
+    global cxxlookup
+    from distutils.util import get_platform
+    plat = get_platform()
+    major = sys.version_info.major
+    minor = sys.version_info.minor
+    path = os.path.join('build', 'lib.{}-{}.{}'.format(plat, major, minor))
+    sys.path.insert(0, path)
+    import cxxlookup
 
 
 def static_check():
     # Pyflakes
-    rc_pyflakes = subprocess.call(['pyflakes', '.'])
+    try:
+        rc_pyflakes = subprocess.call(['pyflakes3', '.'])
+    except OSError:
+        rc_pyflakes = subprocess.call(['pyflakes', '.'])
 
     # PEP-8 check
     rc_pep8 = subprocess.call(['pep8', '.'])
@@ -305,6 +317,8 @@ def main():
         for test_name, test_func in TEST_LIST:
             print(test_name)
         return
+
+    import_cxxlookup()
 
     if args.tests:
         if args.test_names:
