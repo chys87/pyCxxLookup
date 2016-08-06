@@ -258,6 +258,9 @@ class MakeCodeForRange:
             inexpr = inexpr.optimized
             inexpr_long = inexpr_long.optimized
 
+        assert inexpr.rtype in (8, 16, 32), inexpr
+        assert inexpr_long.rtype in (8, 16, 32, 64), inexpr_long
+
         # Constant
         if uniq == 1:
             yield Const(32, addition)
@@ -272,7 +275,7 @@ class MakeCodeForRange:
                 else:
                     yield inexpr + c0
             elif c0 == 0 and (c1 & (c1 - 1)) == 0:
-                yield inexpr << Const(32, c1.bit_length() - 1)
+                yield inexpr << (c1.bit_length() - 1)
             else:
                 yield Cond(inexpr, c1, c0)
             return
@@ -328,7 +331,7 @@ class MakeCodeForRange:
                     mask |= 1 << int(k)
 
                 Bits = 64 if num > 32 else 32
-                expr = (Const(Bits, mask) >> (inexpr - lo)) & Const(32, 1)
+                expr = (Const(Bits, mask) >> (inexpr - lo)) & 1
                 if (value1 + addition != 1) or (value0 + addition != 0):
                     expr = Cond(expr, value1 + addition, value0 + addition)
                 elif Bits > 32:
@@ -343,7 +346,7 @@ class MakeCodeForRange:
             const_prefix_len = utils.const_range(values)
             if const_prefix_len >= threshold:
                 split_pos = const_prefix_len
-                comp_expr = (inexpr < Const(32, lo + split_pos))
+                comp_expr = (inexpr < (lo + split_pos))
                 left_expr = Const(32, int(values[0]) + addition)
                 right_expr = self._make_code(
                     lo + split_pos, values[split_pos:],
@@ -355,7 +358,7 @@ class MakeCodeForRange:
                 const_suffix_len = utils.const_range(values[::-1])
                 if const_suffix_len >= threshold:
                     split_pos = num - const_suffix_len
-                    comp_expr = (inexpr < Const(32, lo + split_pos))
+                    comp_expr = (inexpr < (lo + split_pos))
                     left_expr = self._make_code(
                         lo, values[:split_pos],
                         table_name + '_l',

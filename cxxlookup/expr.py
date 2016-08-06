@@ -363,19 +363,15 @@ class ExprAdd(Expr):
 
 
 class ExprBinary(Expr):
+    __slots__ = 'left', 'right'
+
     def __init__(self, left, right):
-        self.left = left
-        self.right = right
+        self.left = left.optimized
+        self.right = right.optimized
 
     @property
     def children(self):
         return self.left, self.right
-
-    @utils.cached_property
-    def optimized(self):
-        self.left = self.left.optimized
-        self.right = self.right.optimized
-        return self
 
     @property
     def rtype(self):
@@ -470,14 +466,15 @@ class ExprRShift(ExprShift):
     def __init__(self, left, right):
         super().__init__(left, right)
         # Always logical shift
-        assert left.rtype in (8, 16, 32, 64)
+        assert self.left.rtype in (8, 16, 32, 64)
 
     def __str__(self):
         # Avoid the spurious 'u' after the constant
-        if self.right.IS_CONST:
-            right_s = str(self.right.value)
+        right = self.right
+        if right.IS_CONST:
+            right_s = str(right.value)
         else:
-            right_s = str(self.right)
+            right_s = str(right)
 
         return '({} >> {})'.format(self.left, right_s)
 
@@ -528,8 +525,8 @@ class ExprMul(ExprBinary):
 
     @utils.cached_property
     def optimized(self):
-        self.left = left = self.left.optimized
-        self.right = right = self.right.optimized
+        left = self.left
+        right = self.right
 
         right_const = right.IS_CONST
 
@@ -588,11 +585,7 @@ class ExprAnd(ExprBinary):
         right_value = None
 
         if right_const:
-            self.left = left = left.optimized
             right_value = right.value
-        else:
-            self.left = left = left.optimized
-            self.right = right = right.optimized
 
         # (a + c1) & c2 ==> (a + c1') & c2
         # where c1' = c1 with high bits cleared
@@ -645,8 +638,8 @@ class ExprCompare(ExprBinary):
 
     @utils.cached_property
     def optimized(self):
-        self.left = left = self.left.optimized
-        self.right = right = self.right.optimized
+        left = self.left
+        right = self.right
 
         right_const = right.IS_CONST
 

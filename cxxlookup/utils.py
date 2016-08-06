@@ -47,25 +47,26 @@ def make_numpy_array(values):
     return np.array(values, dtype=np.uint32)
 
 
-def most_common_element(arr):
+def most_common_element(arr, *, mode_cnt=_speedups and _speedups.mode_cnt):
     """Return the most common element of a numpy array"""
-    if _speedups:
-        res = _speedups.mode_cnt(arr)
+    if mode_cnt:
+        res = mode_cnt(arr)
         if res is not None:
             return res[0]
     u, indices = np.unique(arr, return_inverse=True)
     return int(u[np.argmax(np.bincount(indices))])
 
 
-def most_common_element_count(arr):
+def most_common_element_count(arr, *,
+                              mode_cnt=_speedups and _speedups.mode_cnt):
     """Return the most common element of a numpy array and its count
     >>> most_common_element_count(np.array([1,3,5,0,5,1,5], np.uint32))
     (5, 3)
     >>> most_common_element_count(np.array([1,3,5,0,5,1,5], np.int64))
     (5, 3)
     """
-    if _speedups:
-        res = _speedups.mode_cnt(arr)
+    if mode_cnt:
+        res = mode_cnt(arr)
         if res is not None:
             return res
     u, indices = np.unique(arr, return_inverse=True)
@@ -74,10 +75,10 @@ def most_common_element_count(arr):
     return int(u[i]), int(bincnt[i])
 
 
-def is_const(array):
+def is_const(array, *, is_const=_speedups and _speedups.is_const):
     """Returns if the given array is constant"""
-    if _speedups:
-        res = _speedups.is_const(array)
+    if is_const:
+        res = is_const(array)
         if res is not None:
             return res
     if array.size == 0:
@@ -86,10 +87,10 @@ def is_const(array):
         return (array == array[0]).all()
 
 
-def is_linear(array):
+def is_linear(array, *, is_linear=_speedups and _speedups.is_linear):
     """Returns if the given array is linear"""
-    if _speedups:
-        res = _speedups.is_linear(array)
+    if is_linear:
+        res = is_linear(array)
         if res is not None:
             return res
     return is_const(slope_array(array, array.dtype.type))
@@ -159,7 +160,8 @@ def compress_array(array, n):
     return res
 
 
-def slope_array(array, dtype=np.int64):
+def slope_array(array, dtype=np.int64, *,
+                slope_array=_speedups and _speedups.slope_array):
     '''
     slope_array is similar to np.diff, but with speedups for certain types.
     Additionally, we support output types different than the input type.
@@ -167,22 +169,22 @@ def slope_array(array, dtype=np.int64):
     >>> slope_array(np.array([1,2,4,0,2], np.uint32), np.int64).tolist()
     [1, 2, -4, 2]
     '''
-    if _speedups:
-        res = _speedups.slope_array(array, dtype)
+    if slope_array:
+        res = slope_array(array, dtype)
         if res is not None:
             return res
     return np.array(array[1:], dtype) - np.array(array[:-1], dtype)
 
 
-def gcd_many(array, _speedups=_speedups):
+def gcd_many(array, *, gcd_many=_speedups and _speedups.gcd_many):
     """
     >>> gcd_many(np.array([26, 39, 52], np.uint32))
     13
     >>> gcd_many(np.array([4, 8, 7], np.uint32))
     1
     """
-    if _speedups:
-        res = _speedups.gcd_many(array)
+    if gcd_many:
+        res = gcd_many(array)
         if res is not None:
             return res
     res = 0
@@ -211,7 +213,7 @@ def gcd_reduce(array):
     return gcd_many(slope_array(array, array.dtype.type))
 
 
-def np_unique(array):
+def np_unique(array, *, unique=_speedups and _speedups.unique):
     '''np.unique with speedups for certain types
 
     >>> np_unique(np.array([1,3,5,7,1,2,3,4], np.uint32)).tolist()
@@ -219,44 +221,44 @@ def np_unique(array):
     >>> np_unique(np.array([1,3,5,7,1,2,3,4], np.int64)).tolist()
     [1, 2, 3, 4, 5, 7]
     '''
-    if _speedups:
-        res = _speedups.unique(array)
+    if unique:
+        res = unique(array)
         if res is not None:
             return res
     return np.unique(array)
 
 
-def np_min(array):
+def np_min(array, *, min_max=_speedups and _speedups.min_max):
     '''
     >>> np_min(np.array([3,2,1,2,3], np.uint32))
     1
     '''
-    if _speedups:
-        res = _speedups.min_max(array, 0)
+    if min_max:
+        res = min_max(array, 0)
         if res is not None:
             return res
     return int(array.min())
 
 
-def np_max(array):
+def np_max(array, *, min_max=_speedups and _speedups.min_max):
     '''
     >>> np_max(np.array([3,2,1,2,3], np.uint32))
     3
     '''
-    if _speedups:
-        res = _speedups.min_max(array, 1)
+    if min_max:
+        res = min_max(array, 1)
         if res is not None:
             return res
     return int(array.max())
 
 
-def np_range(array):
+def np_range(array, *, min_max=_speedups and _speedups.min_max):
     '''
     >>> np_range(np.array([3,2,1,2,3], np.uint32))
     2
     '''
-    if _speedups:
-        res = _speedups.min_max(array, 2)
+    if min_max:
+        res = min_max(array, 2)
         if res is not None:
             return res
     return int(array.max()) - int(array.min())
