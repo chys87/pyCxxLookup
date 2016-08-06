@@ -451,6 +451,44 @@ PyObject *slope_array(PyObject *self, PyObject *args) {
 	}
 }
 
+template <typename T>
+bool do_array_equal(PyArrayObject *x, PyArrayObject *y, size_t n) {
+	VectorView<T> vx(x);
+	VectorView<T> vy(y);
+	for (; n; --n) {
+		if (vx.next() != vy.next())
+			return false;
+	}
+	return true;
+}
+
+PyObject *array_equal(PyObject *self, PyObject *args) {
+	PyArrayObject *x, *y;
+	if (!PyArg_ParseTuple(args, "O!O!", &PyArray_Type, &x, &PyArray_Type, &y))
+		return NULL;
+
+	int type = PyArray_TYPE(x);
+	if (type != PyArray_TYPE(y))
+		Py_RETURN_NONE;
+
+	if (PyArray_NDIM(x) != 1 || PyArray_NDIM(y) != 1)
+		Py_RETURN_NONE;
+
+	size_t n = PyArray_DIMS(x)[0];
+	if (n != PyArray_DIMS(y)[0])
+		Py_RETURN_NONE;
+
+	bool r;
+	switch (type) {
+		case NPY_UINT32:
+			r = do_array_equal<uint32_t>(x, y, n);
+			break;
+		default:
+			Py_RETURN_NONE;
+	}
+	return PyBool_FromLong(r);
+}
+
 // format_c_array(array, type, name_str)
 PyObject *format_c_array(PyObject *self, PyObject *args) {
 	PyArrayObject *array;
@@ -515,6 +553,8 @@ PyMethodDef speedups_methods[] = {
 		"Return whether an array is constant"},
 	{"slope_array", &slope_array, METH_VARARGS,
 		"Create the \"slope array\" of a given array"},
+	{"array_equal", &array_equal, METH_VARARGS,
+		"Return whether two arrays are equal"},
 	{"format_c_array", &format_c_array, METH_VARARGS,
 		"Format a NumPy string as a C array"},
 	{NULL, NULL, 0, NULL}

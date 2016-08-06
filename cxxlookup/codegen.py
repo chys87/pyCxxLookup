@@ -291,7 +291,7 @@ class MakeCodeForRange:
                 if k < 2 or num % k:
                     continue
                 for j in range(k, num, k):
-                    if (values[:k] != values[j:j+k]).any():
+                    if not utils.np_array_equal(values[:k], values[j:j+k]):
                         break
                 else:
                     yield self._make_code(

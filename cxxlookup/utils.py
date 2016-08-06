@@ -264,6 +264,20 @@ def np_range(array, *, min_max=_speedups and _speedups.min_max):
     return int(array.max()) - int(array.min())
 
 
+def np_array_equal(x, y, *, array_equal=_speedups and _speedups.array_equal):
+    '''
+    >>> np_array_equal(np.uint32([1, 2, 3]), np.uint32([1, 2, 3]))
+    True
+    >>> np_array_equal(np.uint32([1, 2, 3]), np.uint32([1, 2, 1]))
+    False
+    '''
+    if array_equal:
+        res = array_equal(x, y)
+        if res is not None:
+            return res
+    return (x == y).all()
+
+
 def profiling(func):
     @functools.wraps(func)
     def _func(*args, **kwargs):
