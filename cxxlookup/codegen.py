@@ -203,14 +203,14 @@ class MakeCodeForRange:
         self._subexprs.append(expr)
         return TempVar(expr.rtype, ind)
 
-    def _make_code(self, lo, values, table_name, inexpr, inexpr_long,
+    def _make_code(self, lo, values, table_name, inexpr, inexpr_long=None,
                    addition=0, **kwargs):
         exprs = [expr.optimized for expr in
                  self._yield_code(lo, values, table_name, inexpr,
                                   inexpr_long, addition, **kwargs)]
         return min(exprs, key=self._overhead)
 
-    def _yield_code(self, lo, values, table_name, inexpr, inexpr_long,
+    def _yield_code(self, lo, values, table_name, inexpr, inexpr_long=None,
                     addition=0,
                     uniqs=None, skip_gcd_reduce=False,
                     skip_almost_linear_reduce=False,
@@ -252,7 +252,7 @@ class MakeCodeForRange:
 
         assert(uniq > 0)
 
-        if inexpr is inexpr_long:
+        if inexpr is inexpr_long or inexpr_long is None:
             inexpr = inexpr_long = inexpr.optimized
         else:
             inexpr = inexpr.optimized
@@ -292,6 +292,22 @@ class MakeCodeForRange:
                 expr = expr + add
             yield expr
             return
+
+        # Has cycles
+        if uniq >= 2 and num % uniq == 0:
+            for k in (values == values[0]).nonzero()[0]:
+                if k < 2 or num % k:
+                    continue
+                for j in range(k, num, k):
+                    if (values[:k] != values[j:j+k]).any():
+                        break
+                else:
+                    yield self._make_code(
+                        0, values[:k],
+                        table_name + '_cycle',
+                        (inexpr - lo) % k,
+                        addition=addition)
+                    return
 
         # Not linear, but only two distinct values.
         if uniq == 2:
@@ -639,6 +655,8 @@ class MakeCodeForRange:
                     pass
                 elif x.IS_COND:
                     extra += 3
+                elif x.IS_MOD:
+                    extra += 7
                 else:
                     extra += 2
 

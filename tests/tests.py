@@ -181,7 +181,11 @@ def _():
     values.extend([0] * 1000)
     values.extend(random.choice((25, 54)) for _ in range(64))
 
-    # Pakced into one single 64-bit integer
+    # cycles
+    values.extend([0] * 1000)
+    values.extend([random.randrange(0, 65536) for _ in range(39)] * 55)
+
+    # Packed into one single 64-bit integer
     values.extend([0] * 1000)
     values.extend(random.randint(0, 255) for _ in range(8))
 
@@ -227,6 +231,13 @@ def _():
     values.extend([0] * 1000)
     values.extend(lo + hi * 65536 for (lo, hi) in zip(lo_values, hi_values))
 
+    return values
+
+
+@Testing('square')
+def _():
+    N = 0x800000
+    values = [i * i & 0x1f for i in range(N)]
     return values
 
 

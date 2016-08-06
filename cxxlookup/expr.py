@@ -149,6 +149,12 @@ class Expr(metaclass=ExprMeta):
     def __mul__(self, r):
         return ExprMul(self, exprize(r))
 
+    def __mod__(self, r):
+        return ExprMod(self, exprize(r))
+
+    def __rmod__(self, r):
+        return ExprMod(exprize(r), self)
+
     def __sub__(self, r):
         r = exprize(r)
         if not r.IS_CONST:
@@ -569,6 +575,21 @@ class ExprMul(ExprBinary):
                 expr = ExprLShift(left, ExprConst(32, rv.bit_length() - 1))
                 return expr.optimized
 
+        return self
+
+
+class ExprMod(ExprBinary):
+    def __str__(self):
+        return '{} % {}'.format(self.left, self.right)
+
+    @utils.cached_property
+    def optimized(self):
+        right = self.right
+        if right.IS_CONST:
+            value = right.value
+            if value and (value & (value - 1)) == 0:
+                return ExprAnd(self.left,
+                               ExprConst(right.rtype, value - 1)).optimized
         return self
 
 
