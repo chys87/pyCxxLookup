@@ -105,8 +105,8 @@ class Expr(metaclass=ExprMeta):
     def __str__(self):
         raise NotImplementedError
 
-    def statics(self):
-        return ''.join(filter(None, (x.statics() for x in self.children)))
+    def statics(self, vs):
+        return ''.join(filter(None, (x.statics(vs) for x in self.children)))
 
     children = ()
     rtype = None
@@ -470,9 +470,10 @@ class ExprLShift(ExprShift):
 
 class ExprRShift(ExprShift):
     def __init__(self, left, right):
-        super().__init__(left, right)
         # Always logical shift
-        assert self.left.rtype in (8, 16, 32, 64)
+        if left.rtype < 32 or left.rtype == 63:
+            left = ExprCast(max(32, left.rtype + 1), left)
+        super().__init__(left, right)
 
     def __str__(self):
         # Avoid the spurious 'u' after the constant
@@ -741,6 +742,11 @@ class ExprCond(Expr):
     def rtype(self):
         return max(31, self.exprT.rtype, self.exprF.rtype)
 
+    def replace_complicated_subexpressions(self, threshold, callback):
+        # It can be unsafe to evaluate exprT or exprF without first checking
+        # cond
+        self.cond.replace_complicated_subexpressions(threshold, callback)
+
 
 class ExprTable(Expr):
     def __init__(self, type, name, values, var, offset):
@@ -768,8 +774,14 @@ class ExprTable(Expr):
             var = utils.trim_brackets(str(self._var))
             return '{}[{}]'.format(self._name, var)
 
-    def statics(self):
-        var_statics = self._var.statics()
+    def statics(self, vs):
+        id_ = id(self)
+        if id_ in vs:
+            return ''
+
+        vs.add(id_)
+
+        var_statics = self._var.statics(vs)
 
         if _speedups:
             c_array = _speedups.format_c_array(
@@ -820,6 +832,9 @@ class ExprTable(Expr):
         super().replace_complicated_subexpressions(threshold, callback)
         if self._var._complicated(threshold):
             self._var = callback(self._var)
+
+    def _complicated(self, _threshold):
+        return True
 
 
 ### Factory functions

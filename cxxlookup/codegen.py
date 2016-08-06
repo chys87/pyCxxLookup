@@ -113,10 +113,12 @@ def _format_code(expr, subexprs):
 
     add_var_in_expr(expr)
 
+    visited_set = set()
+
     if not added_var:
         # No temporary variable
         main_str = '\t\t\treturn {};\n'.format(utils.trim_brackets(str(expr)))
-        main_statics = expr.statics()
+        main_statics = expr.statics(visited_set)
         return main_str, (main_statics,)
 
     else:
@@ -145,13 +147,13 @@ def _format_code(expr, subexprs):
             code_str.append('\t\t\t{} {} = {};\n'.format(
                 type_name(var_type), ExprTempVar.get_name(k),
                 utils.trim_brackets(str(var_expr))))
-            statics.append(var_expr.statics())
+            statics.append(var_expr.statics(visited_set))
 
         main_str = '\t\t\treturn {};\n'.format(utils.trim_brackets(str(expr)))
         code_str.append(main_str)
         code_str.append('\t\t}\n')
 
-        statics.append(expr.statics())
+        statics.append(expr.statics(visited_set))
         statics.sort()
 
         return ''.join(code_str), statics
@@ -164,44 +166,34 @@ class MakeCodeForRange:
         self._table_name = table_name
         self._opt = opt
 
-        self._subexprs = []
-
     @utils.cached_property
     def expr_tuple(self):
         expr = self._make_code(
             self._lo, self.values, self._table_name,
             FixedVar(32, 'c'), FixedVar(64, 'cl'))
 
-        # Find reachable subexpressions
-        reachable = 0
-        to_visit = [expr]
-        while to_visit:
-            x = to_visit.pop()
-            for subexpr in x.walk_tempvar():
-                subexpr_var_id = subexpr.var
-                mask = 1 << subexpr_var_id
-                if not (reachable & mask):
-                    reachable |= mask
-                    to_visit.append(self._subexprs[subexpr_var_id])
+        subexprs = []
+        subexpr_rev = {}
+
+        def make_subexpr(expr):
+            idx = id(expr)
+            ind = subexpr_rev.get(idx)
+            if ind is None:
+                ind = len(subexprs)
+                subexprs.append(expr)
+                subexpr_rev[idx] = ind
+
+            return TempVar(expr.rtype, ind)
 
         # Extract complicated expressions
         # as variables for code readability
-        expr.replace_complicated_subexpressions(8, self._make_subexpr)
-        for i, subexpr in enumerate(self._subexprs):
-            if reachable & (1 << i):
-                subexpr.replace_complicated_subexpressions(
-                    8, self._make_subexpr)
+        expr.replace_complicated_subexpressions(8, make_subexpr)
 
         # Final optimization: Remove unnecessary explicit cast
         while expr.IS_CAST and expr.rtype >= 31:
             expr = expr.value
 
-        return expr, self._subexprs
-
-    def _make_subexpr(self, expr):
-        ind = len(self._subexprs)
-        self._subexprs.append(expr)
-        return TempVar(expr.rtype, ind)
+        return expr, subexprs
 
     def _make_code(self, lo, values, table_name, inexpr, inexpr_long=None,
                    addition=0, **kwargs):
@@ -426,17 +418,14 @@ class MakeCodeForRange:
                 if reduced_uniqs.size * 2 <= uniq or \
                         int(reduced_uniqs[-1]).bit_length() <= maxv_bits // 2:
 
-                    subexpr, subexpr_long = self._smart_subexpr(inexpr,
-                                                                inexpr_long)
-
                     expr = self._make_code(lo, reduced_values,
                                            table_name + '_reduced',
-                                           subexpr, subexpr_long,
+                                           inexpr, inexpr_long,
                                            addition=offset+addition,
                                            uniqs=reduced_uniqs,
                                            skip_almost_linear_reduce=True)
 
-                    yield subexpr * slope + expr
+                    yield inexpr * slope + expr
 
         # Two-level lookup?
         if maxv > num > uniq * 4 // 3:
@@ -459,9 +448,7 @@ class MakeCodeForRange:
                 offset = addition
             compressed_values = utils.compress_array(values + offset, 2)
 
-            subexpr, _ = self._smart_subexpr(inexpr, inexpr_long)
-
-            expr = subexpr - lo
+            expr = inexpr - lo
             # (table[expr/2] >> (expr%2*4)) & 15
             expr_shift = expr >> 1
             expr_left = self._make_code(0, compressed_values,
@@ -477,9 +464,7 @@ class MakeCodeForRange:
         if maxv_bits == 2 and num > 32:
             compressed_values = utils.compress_array(values, 4)
 
-            subexpr, _ = self._smart_subexpr(inexpr, inexpr_long)
-
-            expr = subexpr - lo
+            expr = inexpr - lo
             # (table[expr/4] >> (expr%4*2)) & 3
             expr_shift = expr >> 2
             expr_left = self._make_code(0, compressed_values,
@@ -495,9 +480,7 @@ class MakeCodeForRange:
         if (maxv == 1) and num > 64:
             compressed_values = utils.compress_array(values, 8)
 
-            subexpr, _ = self._smart_subexpr(inexpr, inexpr_long)
-
-            expr = subexpr - lo
+            expr = inexpr - lo
             # (table[expr/8] >> (expr%8)) & 1
             expr_shift = expr >> 3
             expr_left = self._make_code(0, compressed_values,
@@ -565,15 +548,13 @@ class MakeCodeForRange:
             # Fix hi_uniqs as soon as we decide to proceed
             hi_uniqs //= hi_gcd
 
-            subexpr, subexpr_long = self._smart_subexpr(inexpr, inexpr_long)
-
             lo_expr = self._make_code(
                 lo, lo_values, '{}_{}lo'.format(table_name, k),
-                subexpr, subexpr_long, addition=addition,
+                inexpr, inexpr_long, addition=addition,
                 uniqs=lo_uniqs, skip_compress_4bits=(k == 4))
             hi_expr = self._make_code(
                 lo, hi_values, '{}_{}hi'.format(table_name, k),
-                subexpr, subexpr_long,
+                inexpr, inexpr_long,
                 uniqs=hi_uniqs, skip_compress_4bits=(k == 4))
             yield lo_expr + hi_expr * hi_gcd
 
@@ -591,38 +572,7 @@ class MakeCodeForRange:
                 expr = expr + addition
         yield expr
 
-    def _smart_subexpr(self, expr, expr_long):
-        if self._very_simple(expr):
-            return expr, expr_long
-        else:
-            subexpr = self._make_subexpr(expr)
-            return subexpr, subexpr
-
-    @staticmethod
-    def _very_simple(expr):
-        # Var
-        if expr.IS_VAR:
-            return True
-        # Var + const
-        if expr.IS_ADD and \
-                len(expr._exprs) == 1 and \
-                expr._exprs[0].IS_VAR:
-            return True
-        # Var >> const, Var << const
-        if expr.IS_SHIFT and \
-                expr.left.IS_VAR and \
-                expr.right.IS_CONST:
-            return True
-        # (Var - const) >> const
-        if expr.IS_RSHIFT and \
-                expr.left.IS_ADD and \
-                len(expr.left._exprs) == 1 and \
-                expr.left._exprs[0].IS_VAR and \
-                expr.right.IS_CONST:
-            return True
-        return False
-
-    def _overhead(self, expr):
+    def _overhead(self, expr, *, id=id):
         """Estimate the overhead of an expression.
         We use the total number of bytes in tables plus additional overheads
         for each Expr instance.
@@ -630,35 +580,35 @@ class MakeCodeForRange:
         total_bytes = 0
         extra = 0
 
-        visited_subexprs = 0
-        to_scan_list = [expr]
+        q = [expr]
+        visited = set()
 
-        pop = to_scan_list.pop
-        append = to_scan_list.append
-        subexprs = self._subexprs
+        pop = q.pop
+        append = q.append
+        extend = q.extend
 
-        while to_scan_list:
-            expr = pop()
+        while q:
+            x = pop()
+            idx = id(x)
+            if idx in visited:
+                continue
+            visited.add(idx)
 
-            for x in expr.walk():
-                if x.IS_VAR:
-                    if x.IS_TEMPVAR:
-                        var_id = x.var
-                        mask = 1 << var_id
-                        if not (visited_subexprs & mask):
-                            visited_subexprs |= mask
-                            append(subexprs[var_id])
-                elif x.IS_TABLE:
-                    total_bytes += x.table_bytes()
-                    extra += 2
-                elif x.IS_CAST:
-                    pass
-                elif x.IS_COND:
-                    extra += 3
-                elif x.IS_MOD:
-                    extra += 7
-                else:
-                    extra += 2
+            if x.IS_VAR:
+                pass
+            elif x.IS_TABLE:
+                total_bytes += x.table_bytes()
+                extra += 2
+            elif x.IS_CAST:
+                pass
+            elif x.IS_COND:
+                extra += 3
+            elif x.IS_MOD:
+                extra += 7
+            else:
+                extra += 2
+
+            extend(x.children)
 
         return total_bytes + extra * self._opt.overhead_multiply // 2
 
