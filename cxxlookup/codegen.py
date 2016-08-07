@@ -427,6 +427,18 @@ class MakeCodeForRange:
 
                     yield inexpr * slope + expr
 
+            div = self._check_monotonic_increasing(values)
+            if div is not None:
+                for div in self._check_nearby_power_of_two(div):
+                    reduced_values = values - np.arange(num) // div
+                    expr = self._make_code(lo, reduced_values,
+                                           table_name + '_div',
+                                           inexpr, inexpr_long,
+                                           addition=addition,
+                                           skip_almost_linear_reduce=True)
+
+                    yield (inexpr - lo) // div + expr
+
         # Two-level lookup?
         if maxv > num > uniq * 4 // 3:
             indices = np.searchsorted(uniqs, values)
@@ -572,6 +584,32 @@ class MakeCodeForRange:
                 expr = expr + addition
         yield expr
 
+    def _check_monotonic_increasing(self, values):
+        num = values.size
+
+        if num < self._opt.linear_threshold:
+            return
+        if not utils.is_monotonically_increasing(values):
+            return
+
+        ran = int(values[-1] - values[0])
+        if 2 * ran >= num:
+            return
+
+        div = (num - 1) // ran
+
+        return div
+
+
+    def _check_nearby_power_of_two(self, v):
+        yield v
+        if v >= 3:
+            if (v & (v + 1)) == 0:
+                yield v + 1
+            if ((v - 1) & (v - 2)) == 0:
+                yield v - 1
+
+
     def _overhead(self, expr, *, id=id):
         """Estimate the overhead of an expression.
         We use the total number of bytes in tables plus additional overheads
@@ -603,7 +641,7 @@ class MakeCodeForRange:
                 pass
             elif x.IS_COND:
                 extra += 3
-            elif x.IS_MOD:
+            elif x.IS_MOD or x.IS_DIV:
                 extra += 7
             else:
                 extra += 2

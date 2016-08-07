@@ -149,6 +149,12 @@ class Expr(metaclass=ExprMeta):
     def __mul__(self, r):
         return ExprMul(self, exprize(r))
 
+    def __floordiv__(self, r):
+        return ExprDiv(self, exprize(r))
+
+    def __rfloordiv__(self, r):
+        return ExprDiv(exprize(r), self)
+
     def __mod__(self, r):
         return ExprMod(self, exprize(r))
 
@@ -528,7 +534,7 @@ class ExprRShift(ExprShift):
 
 class ExprMul(ExprBinary):
     def __str__(self):
-        return '{} * {}'.format(self.left, self.right)
+        return '({} * {})'.format(self.left, self.right)
 
     @utils.cached_property
     def optimized(self):
@@ -579,9 +585,35 @@ class ExprMul(ExprBinary):
         return self
 
 
+class ExprDiv(ExprBinary):
+    def __init__(self, left, right):
+        if left.rtype < 32 or left.rtype == 63:
+            left = ExprCast(max(32, left.rtype + 1), left)
+        super().__init__(left, right)
+
+    def __str__(self):
+        return '({} / {})'.format(self.left, self.right)
+
+    @utils.cached_property
+    def optimized(self):
+        left = self.left
+        right = self.right
+        if right.IS_CONST:
+            rv = right.value
+            if rv == 0:
+                raise ZeroDivisionError
+            elif rv == 1:
+                return left
+            elif (rv & (rv - 1)) == 0:
+                expr = ExprRShift(left, ExprConst(32, rv.bit_length() - 1))
+                return expr.optimized
+
+        return self
+
+
 class ExprMod(ExprBinary):
     def __str__(self):
-        return '{} % {}'.format(self.left, self.right)
+        return '({} % {})'.format(self.left, self.right)
 
     @utils.cached_property
     def optimized(self):

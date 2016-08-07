@@ -115,6 +115,10 @@ def range_limit(array, threshold):
     return int(ran.searchsorted(threshold))
 
 
+def is_monotonically_increasing(array):
+    return array.size >= 2 and (array[1:] >= array[:-1]).all()
+
+
 def trim_brackets(s):
     front = 0
     while front < len(s) and s[front] == '(':
