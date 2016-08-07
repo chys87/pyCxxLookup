@@ -175,10 +175,12 @@ class MakeCodeForRange:
         subexprs = []
         subexpr_rev = {}
 
-        def make_subexpr(expr):
+        def make_subexpr(expr, allow_new):
             idx = id(expr)
             ind = subexpr_rev.get(idx)
             if ind is None:
+                if not allow_new:
+                    return expr
                 ind = len(subexprs)
                 subexprs.append(expr)
                 subexpr_rev[idx] = ind
@@ -187,7 +189,7 @@ class MakeCodeForRange:
 
         # Extract complicated expressions
         # as variables for code readability
-        expr.replace_complicated_subexpressions(8, make_subexpr)
+        expr.extract_subexprs(4, make_subexpr, True)
 
         # Final optimization: Remove unnecessary explicit cast
         while expr.IS_CAST and expr.rtype >= 31:
@@ -197,9 +199,9 @@ class MakeCodeForRange:
 
     def _make_code(self, lo, values, table_name, inexpr, inexpr_long=None,
                    addition=0, **kwargs):
-        exprs = [expr.optimized for expr in
+        exprs = (expr.optimized for expr in
                  self._yield_code(lo, values, table_name, inexpr,
-                                  inexpr_long, addition, **kwargs)]
+                                  inexpr_long, addition, **kwargs))
         return min(exprs, key=self._overhead)
 
     def _yield_code(self, lo, values, table_name, inexpr, inexpr_long=None,
@@ -294,11 +296,10 @@ class MakeCodeForRange:
                     if not utils.np_array_equal(values[:k], values[j:j+k]):
                         break
                 else:
-                    yield self._make_code(
-                        0, values[:k],
-                        table_name + '_cycle',
-                        (inexpr - lo) % k,
-                        addition=addition)
+                    yield from self._yield_code(0, values[:k],
+                                                table_name + '_cycle',
+                                                (inexpr - lo) % k,
+                                                addition=addition)
                     return
 
         # Not linear, but only two distinct values.
@@ -407,8 +408,8 @@ class MakeCodeForRange:
             slope, slope_count = utils.most_common_element_count(
                 utils.slope_array(values, np.int64))
             if slope and slope_count * 2 >= num:
-                reduced_values = values - slope * (
-                    lo + np.arange(num, dtype=np.int64))
+                reduced_values = values - np.arange(
+                    0, slope * num, slope, dtype=np.int64)
                 # Negative values may cause problems
                 offset = utils.np_min(reduced_values)
                 reduced_values -= offset
@@ -425,7 +426,7 @@ class MakeCodeForRange:
                                            uniqs=reduced_uniqs,
                                            skip_almost_linear_reduce=True)
 
-                    yield inexpr * slope + expr
+                    yield (inexpr - lo) * slope + expr
 
             div = self._check_monotonic_increasing(values)
             if div is not None:
@@ -447,11 +448,10 @@ class MakeCodeForRange:
                                    inexpr, inexpr_long,
                                    uniqs=np.arange(uniq, dtype=np.uint32))
             # Level 2
-            expr = self._make_code(0, uniqs, table_name + '_value', expr, expr,
-                                   addition=addition,
-                                   uniqs=uniqs)
-
-            yield expr
+            yield from self._yield_code(0, uniqs, table_name + '_value',
+                                        expr, expr,
+                                        addition=addition,
+                                        uniqs=uniqs)
 
         # Try using "compressed" table. 2->1
         if not skip_compress_4bits and maxv_bits in (3, 4) and num > 16:
@@ -576,10 +576,10 @@ class MakeCodeForRange:
         # Finally fall back to the simplest one-level table
         table_type = const_type(maxv)
         if addition > 0 and table_type == const_type(maxv + addition):
-            expr = Table(table_type, table_name, values + addition,
-                         inexpr_long, lo)
+            expr = ExprTable(table_type, table_name, values + addition,
+                             inexpr_long, lo)
         else:
-            expr = Table(table_type, table_name, values, inexpr_long, lo)
+            expr = ExprTable(table_type, table_name, values, inexpr_long, lo)
             if addition != 0:
                 expr = expr + addition
         yield expr
@@ -600,7 +600,6 @@ class MakeCodeForRange:
 
         return div
 
-
     def _check_nearby_power_of_two(self, v):
         yield v
         if v >= 3:
@@ -608,7 +607,6 @@ class MakeCodeForRange:
                 yield v + 1
             if ((v - 1) & (v - 2)) == 0:
                 yield v - 1
-
 
     def _overhead(self, expr, *, id=id):
         """Estimate the overhead of an expression.
@@ -620,9 +618,9 @@ class MakeCodeForRange:
 
         q = [expr]
         visited = set()
+        visited_add = visited.add
 
         pop = q.pop
-        append = q.append
         extend = q.extend
 
         while q:
@@ -630,7 +628,7 @@ class MakeCodeForRange:
             idx = id(x)
             if idx in visited:
                 continue
-            visited.add(idx)
+            visited_add(idx)
 
             if x.IS_VAR:
                 pass
@@ -641,7 +639,7 @@ class MakeCodeForRange:
                 pass
             elif x.IS_COND:
                 extra += 3
-            elif x.IS_MOD or x.IS_DIV:
+            elif x.IS_DIV_MOD:
                 extra += 7
             else:
                 extra += 2
