@@ -42,10 +42,10 @@ def _yield_linear_parts(array, opt):
     >>> import numpy as np
     >>> a = np.array([1,1,2,3,4,5,5,4,3,2,2,2,2])
     >>> list(_yield_linear_parts(a, (5, 4)))
-    [(1, 6), (9, 13)]
+    [(1, 6, 1), (9, 13, 0)]
     >>> a = np.array([1,1,1,1,2,3,4,5,6,7,8,9,10])
     >>> list(_yield_linear_parts(a, (5, 4)))
-    [(0, 4), (4, 13)]
+    [(0, 4, 0), (4, 13, 1)]
     '''
     L = array.size
     if L < 3:
@@ -68,48 +68,69 @@ def _yield_linear_parts(array, opt):
         length = hi - lo
         if length >= linear_threshold or (
                 length >= const_threshold and delta[lo] == 0):
-            yield lo, hi
+            yield lo, hi, int(delta[lo])
             lo = hi
         else:
             lo = hi - 1
 
 
+def _get_slope(values):
+    if values.size < 2:
+        return None
+    elif utils.is_linear(values):
+        return int(values[1] - values[0])
+    else:
+        return None
+
+
 def _naive_groupify(base, values, opt):
-    group = {}
+    group_list = []
     lo = 0
 
-    for ls, le in _yield_linear_parts(values, opt):
+    for ls, le, slope in _yield_linear_parts(values, opt):
         if ls > lo:
-            group[base + lo] = values[lo:ls]
-        group[base + ls] = values[ls:le]
+            group_list.append((lo, ls, _get_slope(values[lo:ls])))
+        group_list.append((ls, le, slope))
         lo = le
     if lo < values.size:
-        group[base + lo] = values[lo:]
+        group_list.append((lo, values.size, _get_slope(values[lo:])))
+
+    # Merge three or more consecutive linear groups with the same slope,
+    # in order to reduce the number of switch branches
+    group = {}
+
+    temp_list = []
+    temp_slope = None
+    def emit_temp_list():
+        nonlocal temp_slope
+        if temp_slope is None:
+            return
+        if len(temp_list) >= 3:
+            lo = temp_list[0][0]
+            hi = temp_list[-1][-1]
+            group[base + lo] = values[lo:hi]
+        else:
+            for lo, hi in temp_list:
+                group[base + lo] = values[lo:hi]
+
+        del temp_list[:]
+        temp_slope = None
+
+    for lo, hi, slope in group_list:
+        if slope is None or temp_slope != slope or lo != temp_list[-1][-1]:
+            emit_temp_list()
+        if not slope:  # None or 0
+            group[base + lo] = values[lo:hi]
+        else:
+            temp_slope = slope
+            temp_list.append((lo, hi))
+
+    emit_temp_list()
+
     return group
 
 
 def _refine_groups(group, hole, opt):
-    # Split a group if it will result in two subgroups
-    # with range < 256
-    split_threshold = opt.split_threshold
-    for threshold in (65536, 256):
-
-        for lo, values in list(group.items()):
-
-            if values.size <= 2 * split_threshold or utils.is_linear(values):
-                continue
-
-            l = utils.range_limit(values, threshold)
-            if not split_threshold <= l <= values.size - split_threshold:
-                continue
-
-            right = values[l:]
-            if utils.np_range(right) >= threshold:
-                continue
-
-            group[lo + l] = right
-            group[lo] = values[:l]
-
     # Split a group if it takes the form: [a,...,a,b,...,b]
     # Do it unconditionally!
     for lo, values in list(group.items()):
@@ -126,7 +147,7 @@ def _remove_holes(group, hole, opt):
     # Discard hole groups
     del_hole_list = []
     for lo, values in group.items():
-        if (values == hole).all():
+        if values[0] == hole and utils.is_const(values):
             del_hole_list.append(lo)
     for lo in del_hole_list:
         del group[lo]
