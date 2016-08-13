@@ -648,7 +648,7 @@ class MakeCodeForRange:
 
             extend(x.children)
 
-        return total_bytes + extra * self._opt.overhead_multiply // 2
+        return total_bytes + extra * self._opt.overhead_multiply
 
 
 WRAP_TEMPLATE = string.Template(r'''namespace {
