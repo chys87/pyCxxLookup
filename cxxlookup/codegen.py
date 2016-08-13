@@ -176,6 +176,8 @@ class MakeCodeForRange:
         subexpr_rev = {}
 
         def make_subexpr(expr, allow_new):
+            if expr.IS_VAR:
+                return expr
             idx = id(expr)
             ind = subexpr_rev.get(idx)
             if ind is None:

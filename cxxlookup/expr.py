@@ -356,11 +356,29 @@ class ExprAdd(Expr):
             else:
                 exprs.append(expr)
 
-        self.exprs = tuple(exprs)
-        self.const = ExprConst.combine(const_exprs)
+        const = ExprConst.combine(const_exprs)
 
-        if len(self.exprs) == 1 and not self.const:
-            return self.exprs[0]
+        # (a ? c1 : c2) + c3 ==> (a ? c1 + c3 : c2 + c3)
+        if const:
+            const_value = const.value
+            for i, expr in enumerate(exprs):
+                if expr.IS_COND and \
+                        expr.exprT.IS_CONST and expr.exprF.IS_CONST and \
+                        (min(expr.exprT.value, expr.exprF.value) + const_value
+                         >= 0):
+                    expr = ExprCond(
+                        expr.cond,
+                        ExprConst(self.rtype, expr.exprT.value + const_value),
+                        ExprConst(self.rtype, expr.exprF.value + const_value))
+                    exprs[i] = expr.optimized
+                    const = None
+                    break
+
+        self.exprs = exprs = tuple(exprs)
+        self.const = const
+
+        if len(exprs) == 1 and not const:
+            return exprs[0]
 
         return self
 
@@ -368,13 +386,13 @@ class ExprAdd(Expr):
         exprs = []
         for expr in self.exprs:
             expr.extract_subexprs(threshold, callback, allow_new)
-            if not allow_new or expr._complicated(threshold):
-                expr = callback(expr, allow_new)
+            expr = callback(expr, allow_new and expr._complicated(threshold))
             exprs.append(expr)
         self.exprs = tuple(exprs)
 
-        if self.const and self.const._complicated(threshold):
-            self.const = callback(self.const, allow_new)
+        if self.const:
+            self.const = callback(
+                self.const, allow_new and self.const._complicated(threshold))
 
 
 class ExprBinary(Expr):
@@ -391,10 +409,10 @@ class ExprBinary(Expr):
 
     def extract_subexprs(self, threshold, callback, allow_new):
         super().extract_subexprs(threshold, callback, allow_new)
-        if not allow_new or self.left._complicated(threshold):
-            self.left = callback(self.left, allow_new)
-        if not allow_new or self.right._complicated(threshold):
-            self.right = callback(self.right, allow_new)
+        self.left = callback(self.left,
+                             allow_new and self.left._complicated(threshold))
+        self.right = callback(self.right,
+                              allow_new and self.right._complicated(threshold))
 
 
 class ExprShift(ExprBinary):
@@ -580,6 +598,13 @@ class ExprMul(ExprBinary):
                 expr = ExprCond(left.cond,
                                 ExprMul(left.exprT, right),
                                 ExprMul(left.exprF, right))
+                return expr.optimized
+
+            # (a & 1) * c ==> (a & 1) ? c : 0
+            if left.IS_AND and \
+                    left.right.IS_CONST and \
+                    left.right.value == 1:
+                expr = ExprCond(left, right, ExprConst(self.rtype, 0))
                 return expr.optimized
 
         return self
@@ -777,9 +802,12 @@ class ExprCond(Expr):
         # It can be unsafe to evaluate exprT or exprF without first checking
         # cond
         if not self.cond.IS_VAR:
-            if not allow_new or self.cond._complicated(threshold):
-                self.cond = callback(self.cond, allow_new)
             self.cond.extract_subexprs(threshold, callback, allow_new)
+            self.cond = callback(
+                self.cond, allow_new and self.cond._complicated(threshold))
+        if not allow_new:
+            self.exprT = callback(self.exprT, False)
+            self.exprF = callback(self.exprF, False)
         self.exprT.extract_subexprs(threshold, callback, False)
         self.exprF.extract_subexprs(threshold, callback, False)
 
@@ -866,8 +894,8 @@ class ExprTable(Expr):
 
     def extract_subexprs(self, threshold, callback, allow_new):
         super().extract_subexprs(threshold, callback, allow_new)
-        if not allow_new or self.var._complicated(threshold):
-            self.var = callback(self.var, allow_new)
+        self.var = callback(self.var,
+                            allow_new and self.var._complicated(threshold))
 
     def _complicated(self, _threshold):
         return True
