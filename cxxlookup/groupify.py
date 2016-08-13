@@ -78,7 +78,7 @@ def _get_slope(values):
     if values.size < 2:
         return None
     elif utils.is_linear(values):
-        return int(values[1] - values[0])
+        return int(values[1]) - int(values[0])
     else:
         return None
 
