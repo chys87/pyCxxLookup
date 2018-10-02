@@ -514,8 +514,10 @@ PyObject *format_c_array(PyObject *self, PyObject *args) {
 	std::unique_ptr<char[]> buf(new char[mem_upper_bound]);
 	char *w = buf.get();
 
-	w += snprintf(w, mem_upper_bound, "const %sint%u_t %.*s[%#zx] = {",
-			(type & 1) ? "" : "u", (type + 1) & ~1u, int(name_len), name, n);
+	w += snprintf(w, mem_upper_bound, "alignas(%sint%u_t) const %sint%u_t %.*s[%#zx] = {",
+			(type & 1) ? "" : "u", (type + 1) & ~1u,
+			(type & 1) ? "" : "u", (type + 1) & ~1u,
+			int(name_len), name, n);
 
 	size_t i = 0;
 	VectorView<uint32_t> view(array);

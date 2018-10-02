@@ -46,6 +46,10 @@ COMMON_HEADERS = r'''#include <stdint.h>
 #ifndef UINT64_C
 # define UINT64_C(x) uint64_t(x##ULL)
 #endif
+
+#if !defined alignas && (!defined __cplusplus || __cplusplus < 201103)
+# define alignas(x)
+#endif
 '''
 
 

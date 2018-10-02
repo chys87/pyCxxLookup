@@ -865,8 +865,8 @@ class ExprTable(Expr):
         line_start_format = '\t/* {{:#0{}x}} */'.format(indlen).format
         value_format = ' {{:#0{}x}},'.format(maxlen).format
 
-        line = 'const {} {}[{:#x}] = {{'.format(
-            type_name(self.rtype), self.name, self.values.size)
+        line = 'alignas({type}) const {type} {name}[{size:#x}] = {{'.format(
+            type=type_name(self.rtype), name=self.name, size=self.values.size)
         for i, v in enumerate(self.values):
             if not (i & 7):
                 res_append(line + '\n')
