@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# coding: utf-8
 # vim: set ts=4 sts=4 sw=4 expandtab cc=80:
 
 # Copyright (c) 2014, 2016, chys <admin@CHYS.INFO>
@@ -862,7 +861,7 @@ class ExprTable(Expr):
         # I understand this is not the "correct" way to go, but this is
         # for performance.
         # If I don't care about performance, I could do '{:#0{}x}'.format(v, l)
-        line_start_format = '\t/* {{:#0{}x}} */'.format(indlen).format
+        line_start_format = '  /* {{:#0{}x}} */'.format(indlen).format
         value_format = ' {{:#0{}x}},'.format(maxlen).format
 
         line = 'alignas({type}) const {type} {name}[{size:#x}] = {{'.format(

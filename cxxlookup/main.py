@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# coding: utf-8
 # vim: set ts=4 sts=4 sw=4 expandtab cc=80:
 
 # Copyright (c) 2014, 2016, chys <admin@CHYS.INFO>
@@ -59,9 +58,8 @@ class CxxLookup:
     @utils.cached_property
     @utils.profiling
     def code(self):
-        code = codegen.make_code(self._base, self._values, self._hole,
-                                 self._opt)
-        return codegen.wrap_code(self._func_name, code)
+        return codegen.make_code(self._func_name, self._base, self._values,
+                                 self._hole, self._opt)
 
     def test(self, cxx_name=None):
         run_test(self._func_name, self._base, self._values, self._hole,

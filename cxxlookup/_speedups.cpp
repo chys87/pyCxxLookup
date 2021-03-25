@@ -493,7 +493,7 @@ PyObject* format_c_array(PyObject* self, PyObject* args) {
   while (view) {
     uint32_t v = view.next();
     if (i % 8 == 0) {
-      w = copy_string(w, "\n\t/* 0x");
+      w = copy_string(w, "\n  /* 0x");
       w = write_hex(w, i, n_len - 2);
       w = copy_string(w, " */");
     }

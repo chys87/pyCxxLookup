@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-# coding: utf-8
 # vim: set ts=4 sts=4 sw=4 expandtab cc=80:
 
-# Copyright (c) 2014, 2016, chys <admin@CHYS.INFO>
+# Copyright (c) 2014-2021, chys <admin@CHYS.INFO>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -40,27 +39,25 @@ from . import groupify
 from . import utils
 
 
-COMMON_HEADERS = r'''#include <stdint.h>
-#include <inttypes.h>
+COMMON_HEADERS = r'''#include <inttypes.h>
+#include <stdint.h>
 
 #ifndef UINT64_C
 # define UINT64_C(x) uint64_t(x##ULL)
 #endif
-
-#if !defined alignas && (!defined __cplusplus || __cplusplus < 201103)
-# define alignas(x)
-#endif
 '''
 
 
-def make_code(base, values, hole, opt):
+def make_code(func_name, base, values, hole, opt):
     groups = groupify.groupify(base, values, hole, opt)
 
     res = []
     codes = {}  # lo: (hi, code)
 
+    res.append('namespace {\n\n')
+
     for lo, values in sorted(groups.items()):
-        range_name = 'X_{:x}_{:x}'.format(lo, lo + values.size)
+        range_name = '{}_{:x}_{:x}'.format(func_name, lo, lo + values.size)
         expr, subexprs = MakeCodeForRange(
             lo, values, range_name, opt).expr_tuple
 
@@ -76,22 +73,27 @@ def make_code(base, values, hole, opt):
         if code != hole_code:
             rcode.setdefault(code, []).append((lo, hi))
 
-    res.append('inline uint32_t lookup(uint32_t c) noexcept {\n'
-               '\tuint64_t cl = c;\n'
-               '\t(void)cl;  /* Suppress warning if cl is never used */\n'
-               '\tswitch (c) {\n')
+    res.append('}}  // namespace\n'
+               '\n'
+               'uint32_t {}(uint32_t c) noexcept {{\n'
+               '  uint64_t cl = c;\n'
+               '  static_cast<void>(cl);'
+               '  // Suppress warning if cl is never used\n'
+               '  switch (c) {{\n'.format(func_name))
     for lo, (hi, code) in sorted(codes.items()):
         if rcode[code][0][0] != lo:  # Printed at other case's
             continue
-        for Lo, Hi in rcode[code]:
+        for i, (Lo, Hi) in enumerate(rcode[code]):
+            if i > 0:
+                res.append('\n')
             if Hi - Lo == 1:
-                res.append('\t\tcase {:#x}:\n'.format(Lo))
+                res.append('    case {:#x}:'.format(Lo))
             else:
-                res.append('\t\tcase {:#x} ... {:#x}:\n'.format(Lo, Hi-1))
+                res.append('    case {:#x} ... {:#x}:'.format(Lo, Hi-1))
         res.append(code)
-    res.append('\t\tdefault:\n')
+    res.append('    default:')
     res.append(hole_code)
-    res.append('\t}\n')
+    res.append('  }\n')
     res.append('}\n')
 
     return ''.join(res)
@@ -121,7 +123,7 @@ def _format_code(expr, subexprs):
 
     if not added_var:
         # No temporary variable
-        main_str = '\t\t\treturn {};\n'.format(utils.trim_brackets(str(expr)))
+        main_str = '\n      return {};\n'.format(utils.trim_brackets(str(expr)))
         main_statics = expr.statics(visited_set)
         return main_str, (main_statics,)
 
@@ -138,7 +140,7 @@ def _format_code(expr, subexprs):
 
         rename_var(expr)
 
-        code_str = ['\t\t{\n']
+        code_str = [' {\n']
         statics = []
 
         for (k, var) in enumerate(var_output_order):
@@ -148,14 +150,14 @@ def _format_code(expr, subexprs):
             while var_expr.IS_CAST and var_expr.rtype >= var_type:
                 var_expr = var_expr.value
 
-            code_str.append('\t\t\t{} {} = {};\n'.format(
+            code_str.append('      {} {} = {};\n'.format(
                 type_name(var_type), ExprTempVar.get_name(k),
                 utils.trim_brackets(str(var_expr))))
             statics.append(var_expr.statics(visited_set))
 
-        main_str = '\t\t\treturn {};\n'.format(utils.trim_brackets(str(expr)))
+        main_str = '      return {};\n'.format(utils.trim_brackets(str(expr)))
         code_str.append(main_str)
-        code_str.append('\t\t}\n')
+        code_str.append('    }\n')
 
         statics.append(expr.statics(visited_set))
         statics.sort()
@@ -653,20 +655,3 @@ class MakeCodeForRange:
             extend(x.children)
 
         return total_bytes + extra * self._opt.overhead_multiply
-
-
-WRAP_TEMPLATE = string.Template(r'''namespace {
-namespace CxxLookup_$func_name {
-
-$code
-
-} // namespace CxxLookup_$func_name
-} // namespace
-
-uint32_t $func_name(uint32_t c) noexcept {
-    return CxxLookup_$func_name::lookup(c);
-}''')
-
-
-def wrap_code(func_name, code):
-    return WRAP_TEMPLATE.substitute(func_name=func_name, code=code)
