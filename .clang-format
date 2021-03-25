@@ -1,0 +1,15 @@
+---
+Language: Cpp
+BasedOnStyle: Google
+DerivePointerAlignment: false
+IncludeCategories:
+- Regex:           '^<numpy'
+  Priority:        3
+- Regex:           '^<([^/]*|(bits|sys|linux|asm)/.*)\.h>'
+  Priority:        1
+- Regex:           '^<[^/]*>'
+  Priority:        2
+- Regex:           '^<.*'
+  Priority:        3
+- Regex:           '.*'
+  Priority:        10
