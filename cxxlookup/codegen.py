@@ -216,7 +216,7 @@ class MakeCodeForRange:
                     addition=0,
                     uniqs=None, skip_gcd_reduce=False,
                     skip_almost_linear_reduce=False,
-                    skip_compress_4bits=False, *,
+                    skip_split_4bits_hi_lo=False, *,
                     int=int, np=np, utils=utils, Const=Const, Cast=Cast,
                     Cond=Cond):
         """
@@ -462,7 +462,7 @@ class MakeCodeForRange:
                                         uniqs=uniqs)
 
         # Try using "compressed" table. 2->1
-        if not skip_compress_4bits and maxv_bits in (3, 4) and num > 16:
+        if maxv_bits in (3, 4) and num > 16:
             offset = 0
             if (addition > 0) and (addition + maxv < 16):
                 offset = addition
@@ -473,7 +473,8 @@ class MakeCodeForRange:
             expr_shift = expr >> 1
             expr_left = self._make_code(0, compressed_values,
                                         table_name + '_4bits',
-                                        expr_shift, expr_shift)
+                                        expr_shift, expr_shift,
+                                        skip_split_4bits_hi_lo=False)
             expr_right = (expr & 1) << 2
             expr = (expr_left >> expr_right) & 15
             expr = expr + (addition - offset)
@@ -527,6 +528,8 @@ class MakeCodeForRange:
         for k in (4, 8, 16):
             if k >= maxv_bits:
                 break
+            if k == 4 and skip_split_4bits_hi_lo:
+                continue
 
             lomask = np.uint32((1 << k) - 1)
             lo_values = values & lomask
@@ -571,11 +574,11 @@ class MakeCodeForRange:
             lo_expr = self._make_code(
                 lo, lo_values, '{}_{}lo'.format(table_name, k),
                 inexpr, inexpr_long, addition=addition,
-                uniqs=lo_uniqs, skip_compress_4bits=(k == 4))
+                uniqs=lo_uniqs)
             hi_expr = self._make_code(
                 lo, hi_values, '{}_{}hi'.format(table_name, k),
                 inexpr, inexpr_long,
-                uniqs=hi_uniqs, skip_compress_4bits=(k == 4))
+                uniqs=hi_uniqs)
             yield lo_expr + hi_expr * hi_gcd
 
             if hi_uniq <= 2:  # No reason to continue trying
