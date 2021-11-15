@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# coding: utf-8
 # vim: set ts=4 sts=4 sw=4 expandtab cc=80:
 
 # Copyright (c) 2014, chys <admin@CHYS.INFO>
@@ -31,13 +30,25 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-from collections import namedtuple
+from dataclasses import dataclass, replace
 
 
-Options = namedtuple('Options',
-                     ('linear_threshold', 'const_threshold',
-                      'hole_threshold', 'group_threshold',
-                      'overhead_multiply'))
+__all__ = ['Options', 'OPT_Os', 'OPT_O2', 'OPT_O3', 'OPT_O4', 'OPT_DEFAULT']
+
+
+@dataclass
+class Options:
+    linear_threshold: int
+    const_threshold: int
+    hole_threshold: int
+    group_threshold: int
+    overhead_multiply: int = 2
+
+    def allow_complex_data_manipulation(self) -> 'Options':
+        '''
+        Allow complex data manipulation without increasing the number of
+        branches.'''
+        return replace(self, overhead_multiply=2)
 
 
 # Prefere smaller code size
