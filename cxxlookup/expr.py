@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # vim: set ts=4 sts=4 sw=4 expandtab cc=80:
 
-# Copyright (c) 2014, 2016, chys <admin@CHYS.INFO>
+# Copyright (c) 2014-2021, chys <admin@CHYS.INFO>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -809,6 +809,10 @@ class ExprCond(Expr):
             self.exprF = callback(self.exprF, False)
         self.exprT.extract_subexprs(threshold, callback, False)
         self.exprF.extract_subexprs(threshold, callback, False)
+
+    def _complicated(self, threshold):
+        # Always assign to a variable for readability.
+        return True
 
 
 class ExprTable(Expr):

@@ -220,7 +220,7 @@ class MakeCodeForRange:
                     int=int, np=np, utils=utils, Const=Const, Cast=Cast,
                     Cond=Cond):
         """
-        Everything in values must be positive; addition may be negative.
+        Everything in values must be non-negative; addition may be negative.
         The final result has type uint32_t even if it may be negative.
 
         Yield:
@@ -245,6 +245,7 @@ class MakeCodeForRange:
             if minv:
                 values = values - minv
                 uniqs = uniqs - minv
+                addition += minv
 
         uniq = uniqs.size
         maxv = int(uniqs[-1])
@@ -358,8 +359,8 @@ class MakeCodeForRange:
 
         # Has long constant prefix or suffix.
         # Frequently resulting from bitvec or lo/hi partition
-        if uniq >= 3 and num > self._opt.const_threshold:
-            threshold = max(self._opt.const_threshold, num // 3)
+        if uniq >= 2 and num > self._opt.const_threshold:
+            threshold = max(self._opt.const_threshold, num // 4)
             const_prefix_len = utils.const_range(values)
             if const_prefix_len >= threshold:
                 split_pos = const_prefix_len
@@ -414,8 +415,8 @@ class MakeCodeForRange:
         # Most elements are almost linear, but a few outliers exist.
         if not skip_almost_linear_reduce:
             slope, slope_count = utils.most_common_element_count(
-                utils.slope_array(values, np.int64))
-            if slope and slope_count * 2 >= num:
+                        utils.slope_array(values, np.int64))
+            if slope and slope_count * 3 >= num:
                 reduced_values = values - np.arange(
                     0, slope * num, slope, dtype=np.int64)
                 # Negative values may cause problems
@@ -439,7 +440,10 @@ class MakeCodeForRange:
             div = self._check_monotonic_increasing(values)
             if div is not None:
                 for div in self._check_nearby_power_of_two(div):
-                    reduced_values = values - np.arange(num) // div
+                    if div * 3 > num:
+                        continue
+                    reduced_values = values - \
+                            np.arange(num, dtype=np.uint32) // div
                     expr = self._make_code(lo, reduced_values,
                                            table_name + '_div',
                                            inexpr, inexpr_long,
