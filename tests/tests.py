@@ -2,7 +2,7 @@
 # coding: utf-8
 # vim: set ts=4 sts=4 sw=4 expandtab cc=80:
 
-# Copyright (c) 2014, 2016, chys <admin@CHYS.INFO>
+# Copyright (c) 2014-2021, chys <admin@CHYS.INFO>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -54,16 +54,7 @@ def import_cxxlookup():
 
 def static_check():
     # Pyflakes
-    try:
-        rc_pyflakes = subprocess.call(['pyflakes3', '.'])
-    except OSError:
-        rc_pyflakes = subprocess.call(['pyflakes', '.'])
-
-    # PEP-8 check
-    rc_pep8 = subprocess.call(['pep8', '.'])
-
-    if rc_pyflakes != 0 or rc_pep8 != 0:
-        sys.exit(1)
+    subprocess.check_call(['flake8', '.'])
 
 
 class Tester:
