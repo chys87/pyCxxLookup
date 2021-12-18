@@ -378,7 +378,6 @@ class MakeCodeForRange:
                     addition=addition,
                     maxdepth=maxdepth-1)
                 yield Cond(comp_expr, left_expr, right_expr)
-                return
             else:
                 const_suffix_len = utils.const_range(values[::-1])
                 if const_suffix_len >= threshold:
@@ -392,7 +391,6 @@ class MakeCodeForRange:
                         maxdepth=maxdepth-1)
                     right_expr = Const(32, int(values[-1]) + addition)
                     yield Cond(comp_expr, left_expr, right_expr)
-                    return
 
         # Can we pack them into one 64-bit integer?
         if num * maxv_bits <= 64:
@@ -466,7 +464,7 @@ class MakeCodeForRange:
         # Consecutive values are similar
         if not skip_stride and maxdepth > 0:
             values_nonzeros = np.count_nonzero(values)
-            for stride in (128, 64, 32, 16, 8, 4, 2):
+            for stride in (1024, 512, 256, 128, 64, 32, 16, 8, 4, 2):
                 if stride * 8 > num:
                     continue
                 snum = (num + stride - 1) // stride
@@ -494,7 +492,6 @@ class MakeCodeForRange:
                             inexpr, inexpr_long,
                             maxdepth=maxdepth-1)
                     yield base_expr + delta_expr
-                    break
 
         # Two-level lookup?
         if maxv > num > uniq * 4 // 3 and maxdepth > 0:
