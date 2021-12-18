@@ -461,6 +461,12 @@ class MakeCodeForRange:
             expr = self._make_code(lo, indices, table_name + '_index',
                                    inexpr, inexpr_long,
                                    uniqs=np.arange(uniq, dtype=np.uint32))
+
+            if expr.rtype % 8 != 0:
+                # Signed return type - convert to unsigned, becuase inexpr
+                # of _yield_code must be unsigned
+                expr = Cast(32, expr)
+
             # Level 2
             yield from self._yield_code(0, uniqs, table_name + '_value',
                                         expr, expr,

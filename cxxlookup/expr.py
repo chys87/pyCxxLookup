@@ -885,7 +885,10 @@ class ExprTable(Expr):
 
     @utils.cached_property
     def optimized(self):
-        var = self.var
+        var = self.var.optimized
+        # If var contains a cast, it's usually unnecessary
+        while var.IS_CAST and var.value.rtype < var.rtype:
+            self.var = var = var.value.optimized
         # Absorb constants into offset
         if var.IS_ADD and var.const:
             self.offset -= var.const.value
