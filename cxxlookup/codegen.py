@@ -491,7 +491,7 @@ class MakeCodeForRange:
                             maxdepth=maxdepth-1)
                     delta_expr = self._make_code(
                             lo, delta, table_name + '_stride{}delta'.format(stride),
-                            inexpr, inexpr_long, skip_stride=True,
+                            inexpr, inexpr_long,
                             maxdepth=maxdepth-1)
                     yield base_expr + delta_expr
                     break
