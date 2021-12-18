@@ -372,6 +372,7 @@ class MakeCodeForRange:
                     inexpr, inexpr_long,
                     addition=addition)
                 yield Cond(comp_expr, left_expr, right_expr)
+                return
             else:
                 const_suffix_len = utils.const_range(values[::-1])
                 if const_suffix_len >= threshold:
@@ -384,6 +385,7 @@ class MakeCodeForRange:
                         addition=addition)
                     right_expr = Const(32, int(values[-1]) + addition)
                     yield Cond(comp_expr, left_expr, right_expr)
+                    return
 
         # Can we pack them into one 64-bit integer?
         if num * maxv_bits <= 64:
