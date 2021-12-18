@@ -176,7 +176,8 @@ class MakeCodeForRange:
     def expr_tuple(self):
         expr = self._make_code(
             self._lo, self.values, self._table_name,
-            FixedVar(32, 'c'), FixedVar(64, 'cl'))
+            FixedVar(32, 'c'), FixedVar(64, 'cl'),
+            maxdepth=6)
 
         subexprs = []
         subexpr_rev = {}
@@ -206,17 +207,20 @@ class MakeCodeForRange:
         return expr, subexprs
 
     def _make_code(self, lo, values, table_name, inexpr, inexpr_long=None,
-                   addition=0, **kwargs):
+                   addition=0, *, maxdepth, **kwargs):
         exprs = (expr.optimized for expr in
                  self._yield_code(lo, values, table_name, inexpr,
-                                  inexpr_long, addition, **kwargs))
+                                  inexpr_long, addition, maxdepth=maxdepth,
+                                  **kwargs))
         return min(exprs, key=self._overhead)
 
     def _yield_code(self, lo, values, table_name, inexpr, inexpr_long=None,
                     addition=0,
+                    *,
+                    maxdepth,
                     uniqs=None, skip_gcd_reduce=False,
                     skip_almost_linear_reduce=False,
-                    skip_split_4bits_hi_lo=False, *,
+                    skip_split_4bits_hi_lo=False, skip_stride=False,
                     int=int, np=np, utils=utils, Const=Const, Cast=Cast,
                     Cond=Cond):
         """
@@ -308,7 +312,8 @@ class MakeCodeForRange:
                     yield from self._yield_code(0, values[:k],
                                                 table_name + '_cycle',
                                                 (inexpr - lo) % k,
-                                                addition=addition)
+                                                addition=addition,
+                                                maxdepth=maxdepth-1)
                     return
 
         # Not linear, but only two distinct values.
@@ -359,7 +364,7 @@ class MakeCodeForRange:
 
         # Has long constant prefix or suffix.
         # Frequently resulting from bitvec or lo/hi partition
-        if uniq >= 2 and num > self._opt.const_threshold:
+        if uniq >= 2 and num > self._opt.const_threshold and maxdepth > 0:
             threshold = max(self._opt.const_threshold, num // 4)
             const_prefix_len = utils.const_range(values)
             if const_prefix_len >= threshold:
@@ -370,7 +375,8 @@ class MakeCodeForRange:
                     lo + split_pos, values[split_pos:],
                     table_name + '_r',
                     inexpr, inexpr_long,
-                    addition=addition)
+                    addition=addition,
+                    maxdepth=maxdepth-1)
                 yield Cond(comp_expr, left_expr, right_expr)
                 return
             else:
@@ -382,7 +388,8 @@ class MakeCodeForRange:
                         lo, values[:split_pos],
                         table_name + '_l',
                         inexpr, inexpr_long,
-                        addition=addition)
+                        addition=addition,
+                        maxdepth=maxdepth-1)
                     right_expr = Const(32, int(values[-1]) + addition)
                     yield Cond(comp_expr, left_expr, right_expr)
                     return
@@ -415,7 +422,7 @@ class MakeCodeForRange:
             return
 
         # Most elements are almost linear, but a few outliers exist.
-        if not skip_almost_linear_reduce:
+        if not skip_almost_linear_reduce and maxdepth > 0:
             slope, slope_count = utils.most_common_element_count(
                         utils.slope_array(values, np.int64))
             if slope and slope_count * 3 >= num:
@@ -435,7 +442,8 @@ class MakeCodeForRange:
                                            inexpr, inexpr_long,
                                            addition=offset+addition,
                                            uniqs=reduced_uniqs,
-                                           skip_almost_linear_reduce=True)
+                                           skip_almost_linear_reduce=True,
+                                           maxdepth=maxdepth-1)
 
                     yield (inexpr - lo) * slope + expr
 
@@ -450,17 +458,52 @@ class MakeCodeForRange:
                                            table_name + '_div',
                                            inexpr, inexpr_long,
                                            addition=addition,
-                                           skip_almost_linear_reduce=True)
+                                           skip_almost_linear_reduce=True,
+                                           maxdepth=maxdepth-1)
 
                     yield (inexpr - lo) // div + expr
 
+        # Consecutive values are similar
+        if not skip_stride and maxdepth > 0:
+            values_nonzeros = np.count_nonzero(values)
+            for stride in (128, 64, 32, 16, 8, 4, 2):
+                if stride * 8 > num:
+                    continue
+                snum = (num + stride - 1) // stride
+                if snum * stride != num:
+                    values_padded = np.concatenate(
+                        [values,
+                         np.ones(snum * stride - num, dtype=np.uint32) * values[-1]])
+                else:
+                    values_padded = values
+                base_values = np.min(np.reshape(values_padded, (snum, stride)),
+                                     axis=1)
+                base_values_full = np.reshape(np.vstack([base_values] * stride).T,
+                                              snum * stride)[:num]
+                delta = values - base_values_full
+                if (np.count_nonzero(delta) < values_nonzeros / (stride * .9) or
+                        utils.np_max(delta).bit_length() <= maxv_bits // 2):
+                    base_inexpr = (inexpr - lo) // stride
+                    base_expr = self._make_code(
+                            0, base_values, table_name + '_stride{}'.format(stride),
+                            base_inexpr, base_inexpr, addition=addition,
+                            skip_stride=True,
+                            maxdepth=maxdepth-1)
+                    delta_expr = self._make_code(
+                            lo, delta, table_name + '_stride{}delta'.format(stride),
+                            inexpr, inexpr_long, skip_stride=True,
+                            maxdepth=maxdepth-1)
+                    yield base_expr + delta_expr
+                    break
+
         # Two-level lookup?
-        if maxv > num > uniq * 4 // 3:
+        if maxv > num > uniq * 4 // 3 and maxdepth > 0:
             indices = np.searchsorted(uniqs, values)
             # Level 1
             expr = self._make_code(lo, indices, table_name + '_index',
                                    inexpr, inexpr_long,
-                                   uniqs=np.arange(uniq, dtype=np.uint32))
+                                   uniqs=np.arange(uniq, dtype=np.uint32),
+                                   maxdepth=maxdepth-1)
 
             if expr.rtype % 8 != 0:
                 # Signed return type - convert to unsigned, becuase inexpr
@@ -471,10 +514,11 @@ class MakeCodeForRange:
             yield from self._yield_code(0, uniqs, table_name + '_value',
                                         expr, expr,
                                         addition=addition,
-                                        uniqs=uniqs)
+                                        uniqs=uniqs,
+                                        maxdepth=maxdepth-1)
 
         # Try using "compressed" table. 2->1
-        if maxv_bits in (3, 4) and num > 16:
+        if maxv_bits in (3, 4) and num > 16 and maxdepth > 0:
             offset = 0
             if (addition > 0) and (addition + maxv < 16):
                 offset = addition
@@ -486,7 +530,8 @@ class MakeCodeForRange:
             expr_left = self._make_code(0, compressed_values,
                                         table_name + '_4bits',
                                         expr_shift, expr_shift,
-                                        skip_split_4bits_hi_lo=False)
+                                        skip_split_4bits_hi_lo=False,
+                                        maxdepth=maxdepth-1)
             expr_right = (expr & 1) << 2
             expr = (expr_left >> expr_right) & 15
             expr = expr + (addition - offset)
@@ -494,7 +539,7 @@ class MakeCodeForRange:
             return
 
         # Try using "compressed" table. 4->1
-        if maxv_bits == 2 and num > 32:
+        if maxv_bits == 2 and num > 32 and maxdepth > 0:
             compressed_values = utils.compress_array(values, 4)
 
             expr = inexpr - lo
@@ -502,7 +547,8 @@ class MakeCodeForRange:
             expr_shift = expr >> 2
             expr_left = self._make_code(0, compressed_values,
                                         table_name + '_2bits',
-                                        expr_shift, expr_shift)
+                                        expr_shift, expr_shift,
+                                        maxdepth=maxdepth-1)
             expr_right = (expr & 3) << 1
             expr = (expr_left >> expr_right) & 3
             expr = expr + addition
@@ -510,7 +556,7 @@ class MakeCodeForRange:
             return
 
         # Try using "bitvector". 8->1
-        if (maxv == 1) and num > 64:
+        if (maxv == 1) and num > 64 and maxdepth > 0:
             compressed_values = utils.compress_array(values, 8)
 
             expr = inexpr - lo
@@ -518,7 +564,8 @@ class MakeCodeForRange:
             expr_shift = expr >> 3
             expr_left = self._make_code(0, compressed_values,
                                         table_name + '_bitvec',
-                                        expr_shift, expr_shift)
+                                        expr_shift, expr_shift,
+                                        maxdepth=maxdepth-1)
             expr_right = expr & 7
             expr = (expr_left >> expr_right) & 1
             expr = expr + addition
@@ -526,75 +573,79 @@ class MakeCodeForRange:
             return
 
         # GCD may help
-        if not skip_gcd_reduce:
+        if not skip_gcd_reduce and maxdepth > 0:
             gcd = utils.gcd_reduce(values)
             if gcd > 1:
                 offset = int(values[0]) % gcd
                 reduced_values = values // gcd
                 expr = self._make_code(lo, reduced_values, table_name + '_gcd',
                                        inexpr, inexpr_long,
-                                       skip_gcd_reduce=True)
+                                       skip_gcd_reduce=True,
+                                       maxdepth=maxdepth-1)
                 yield expr * gcd + (addition + offset)
 
         # Try splitting the data into low and high parts
-        for k in (4, 8, 16):
-            if k >= maxv_bits:
-                break
-            if k == 4 and skip_split_4bits_hi_lo:
-                continue
-
-            lomask = np.uint32((1 << k) - 1)
-            lo_values = values & lomask
-            hi_values = values - lo_values
-
-            lo_uniqs = utils.np_unique(lo_values)
-            lo_uniq = lo_uniqs.size
-            if lo_uniq < 2:
-                continue
-            hi_uniqs = utils.np_unique(hi_values)
-            hi_uniq = hi_uniqs.size
-            if hi_uniq < 2:
-                break
-
-            hi_gcd = utils.gcd_many(hi_values)
-            hi_values //= hi_gcd
-
-            if k == 4:
-                # We must be very careful when k == 4
-                # If we just split it, two 4-bit values will be joined
-                # in the recursion, and then split again, resulting in almost
-                # uncontrollable recursions
-                if max(lo_uniq, hi_uniq) <= 4:
-                    pass
-                else:
+        if maxdepth > 1:
+            for k in (4, 8, 16):
+                if k >= maxv_bits:
+                    break
+                if k == 4 and skip_split_4bits_hi_lo:
                     continue
 
-            elif min(lo_uniq, hi_uniq) <= min(1 << (k - 1), uniq // 2):
-                pass
+                lomask = np.uint32((1 << k) - 1)
+                lo_values = values & lomask
+                hi_values = values - lo_values
 
-            elif utils.np_range(hi_values).bit_length() <= k // 2:
-                pass
+                lo_uniqs = utils.np_unique(lo_values)
+                lo_uniq = lo_uniqs.size
+                if lo_uniq < 2:
+                    continue
+                hi_uniqs = utils.np_unique(hi_values)
+                hi_uniq = hi_uniqs.size
+                if hi_uniq < 2:
+                    break
 
-            else:
-                # If none of the conditions meet, we consider the split not
-                # helpful.  We cannot just try out.  That'd be too slow.
-                continue
+                hi_gcd = utils.gcd_many(hi_values)
+                hi_values //= hi_gcd
 
-            # Fix hi_uniqs as soon as we decide to proceed
-            hi_uniqs //= hi_gcd
+                if k == 4:
+                    # We must be very careful when k == 4
+                    # If we just split it, two 4-bit values will be joined
+                    # in the recursion, and then split again, resulting in almost
+                    # uncontrollable recursions
+                    if max(lo_uniq, hi_uniq) <= 4:
+                        pass
+                    else:
+                        continue
 
-            lo_expr = self._make_code(
-                lo, lo_values, '{}_{}lo'.format(table_name, k),
-                inexpr, inexpr_long, addition=addition,
-                uniqs=lo_uniqs)
-            hi_expr = self._make_code(
-                lo, hi_values, '{}_{}hi'.format(table_name, k),
-                inexpr, inexpr_long,
-                uniqs=hi_uniqs)
-            yield lo_expr + hi_expr * hi_gcd
+                elif min(lo_uniq, hi_uniq) <= min(1 << (k - 1), uniq // 2):
+                    pass
 
-            if hi_uniq <= 2:  # No reason to continue trying
-                break
+                elif utils.np_range(hi_values).bit_length() <= k // 2:
+                    pass
+
+                else:
+                    # If none of the conditions meet, we consider the split not
+                    # helpful.  We cannot just try out.  That'd be too slow.
+                    continue
+
+                # Fix hi_uniqs as soon as we decide to proceed
+                hi_uniqs //= hi_gcd
+
+                lo_expr = self._make_code(
+                    lo, lo_values, '{}_{}lo'.format(table_name, k),
+                    inexpr, inexpr_long, addition=addition,
+                    uniqs=lo_uniqs,
+                    maxdepth=maxdepth-1)
+                hi_expr = self._make_code(
+                    lo, hi_values, '{}_{}hi'.format(table_name, k),
+                    inexpr, inexpr_long,
+                    uniqs=hi_uniqs,
+                    maxdepth=maxdepth-1)
+                yield lo_expr + hi_expr * hi_gcd
+
+                if hi_uniq <= 2:  # No reason to continue trying
+                    break
 
         # Finally fall back to the simplest one-level table
         table_type = const_type(maxv)
