@@ -299,29 +299,27 @@ def profiling(func):
         pr = profile.Profile()
         pr.enable()
         try:
-            res = func(*args, **kwargs)
+            return func(*args, **kwargs)
 
         finally:
             pr.disable()
 
-        try:
-            stat_count = int(profiling_setting)
-        except ValueError:
-            stat_count = 0
-        if stat_count < 10:
-            stat_count = 30
+            try:
+                stat_count = int(profiling_setting)
+            except ValueError:
+                stat_count = 0
+            if stat_count < 10:
+                stat_count = 30
 
-        ps = pstats.Stats(pr, stream=sys.stderr)
-        ps.sort_stats('cumulative', 'stdname')
-        ps.print_stats(stat_count)
+            ps = pstats.Stats(pr, stream=sys.stderr)
+            ps.sort_stats('cumulative', 'stdname')
+            ps.print_stats(stat_count)
 
-        ps.sort_stats('tottime', 'stdname')
-        ps.print_stats(stat_count)
+            ps.sort_stats('tottime', 'stdname')
+            ps.print_stats(stat_count)
 
-        if os.environ.get('pyCxxLookup_Profiling_Callers'):
-            ps.print_callers()
-
-        return res
+            if os.environ.get('pyCxxLookup_Profiling_Callers'):
+                ps.print_callers()
 
     return _func
 
