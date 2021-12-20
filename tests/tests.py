@@ -228,7 +228,14 @@ def _():
 @Testing('square')
 def _():
     N = 0x800000
-    values = [i * i & 0x1f for i in range(N)]
+    values = [i * i & 0x3f for i in range(N)]
+    return values
+
+
+@Testing('cycles')
+def _():
+    random.seed(0)
+    values = [random.randrange(256) for _ in range(54)] * 25
     return values
 
 

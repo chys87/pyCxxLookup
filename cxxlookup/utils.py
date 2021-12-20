@@ -282,6 +282,80 @@ def np_array_equal(x, y, *, array_equal=_speedups and _speedups.array_equal):
     return (x == y).all()
 
 
+def np_array_add_equal(
+        a, b, c, *, array_add_equal=_speedups and _speedups.array_add_equal,
+        isinstance=isinstance, int=int):
+    '''Test whether a + b is equal to c
+
+    Optimized for a and c are arrays, and b is an integer
+    '''
+    if array_add_equal and isinstance(b, int) and 0 <= b <= 0xffffffff:
+        res = array_add_equal(a, b, c)
+        if res is not None:
+            return res
+    return np_array_equal(a + b, c)
+
+
+def np_cycle(array, *, max_cycle=None,
+             np_array_equal=np_array_equal,
+             np_array_add_equal=np_array_add_equal, range=range):
+    '''Find minimun positive cycle of array.
+
+    >>> np_cycle(np.array(list(range(100)) * 9))
+    100
+    >>> np_cycle(np.array(list(range(100)) * 9 + list(range(50))))
+    100
+    >>> np_cycle(np.arange(100))
+    0
+    '''
+    n, = array.shape
+    if n < 2:
+        return 0
+
+    indices, = np.nonzero(array == array[0])
+    ind_n, = indices.shape
+    if ind_n == n:  # array is const
+        return 1
+
+    indices = indices.astype(np.uint32)
+
+    max_cycle = max_cycle or n
+
+    for i in range(1, ind_n):
+        k = int(indices[i])
+        if k > max_cycle:
+            break
+
+        # Check whether indicese of full cyclees are reasonable
+        cycles = n // k
+        if cycles > 1:
+            cycles_ind_n = cycles * i
+            if cycles_ind_n > ind_n:
+                continue
+            if not indices[cycles_ind_n - 1] < cycles * k:
+                continue
+            if cycles_ind_n < ind_n and not indices[cycles_ind_n] >= cycles * k:
+                continue
+        else:
+            if not i * 2 >= ind_n:
+                continue
+            if not np_array_add_equal(indices[:ind_n-i], k, indices[i:]):
+                continue
+
+        tail = n % k
+        if tail and not np_array_equal(array[:tail], array[-tail:]):
+            continue
+
+        ref = array[:k]
+        for j in range(k, n - k + 1, k):
+            if not np_array_equal(ref, array[j:j+k]):
+                break
+        else:
+            return k
+
+    return 0
+
+
 def profiling(func):
     @functools.wraps(func)
     def _func(*args, **kwargs):

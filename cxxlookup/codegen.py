@@ -300,22 +300,6 @@ class MakeCodeForRange:
             yield expr
             return
 
-        # Has cycles
-        if uniq >= 2 and num % uniq == 0:
-            for k in (values == values[0]).nonzero()[0]:
-                if k < 2 or num % k:
-                    continue
-                for j in range(k, num, k):
-                    if not utils.np_array_equal(values[:k], values[j:j+k]):
-                        break
-                else:
-                    yield from self._yield_code(0, values[:k],
-                                                table_name + '_cycle',
-                                                (inexpr - lo) % k,
-                                                addition=addition,
-                                                maxdepth=maxdepth-1)
-                    return
-
         # Not linear, but only two distinct values.
         if uniq == 2:
             k = utils.const_range(values)
@@ -360,6 +344,19 @@ class MakeCodeForRange:
                 elif Bits > 32:
                     expr = Cast(32, expr)
                 yield expr
+                return
+
+        # Has cycles
+        if num > uniq >= 2 and maxdepth > 0:
+            min_cycle = 2
+            cycle = utils.np_cycle(values,
+                                   max_cycle=max(num//2, num-32))
+            if cycle:
+                yield from self._yield_code(0, values[:cycle],
+                                            table_name + '_cycle',
+                                            (inexpr - lo) % cycle,
+                                            addition=addition,
+                                            maxdepth=maxdepth-1)
                 return
 
         # Has long constant prefix or suffix.
