@@ -182,13 +182,15 @@ class MakeCodeForRange:
         subexprs = []
         subexpr_rev = {}
 
-        def make_subexpr(expr, allow_new):
+        def make_subexpr(expr, allow_extract_table, prefer_extracted):
             if expr.IS_VAR:
                 return expr
             idx = id(expr)
             ind = subexpr_rev.get(idx)
             if ind is None:
-                if not allow_new:
+                if not prefer_extracted:
+                    return expr
+                if not allow_extract_table and expr.has_table:
                     return expr
                 ind = len(subexprs)
                 subexprs.append(expr)
@@ -198,7 +200,7 @@ class MakeCodeForRange:
 
         # Extract complicated expressions
         # as variables for code readability
-        expr.extract_subexprs(4, make_subexpr, True)
+        expr.extract_subexprs(5, make_subexpr, True)
 
         # Final optimization: Remove unnecessary explicit cast
         while expr.IS_CAST and expr.rtype >= 31:

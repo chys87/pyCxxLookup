@@ -105,8 +105,6 @@ class ExprMeta(type):
 
 
 class Expr(metaclass=ExprMeta):
-    __slots__ = ()
-
     def __str__(self):
         raise NotImplementedError
 
@@ -144,9 +142,16 @@ class Expr(metaclass=ExprMeta):
                 return True
         return False
 
-    def extract_subexprs(self, threshold, callback, allow_new):
+    @utils.cached_property
+    def has_table(self):
+        '''Recursively checks whether the expression contains ExprTable.
+        If true, the expression can be unsafe to extract in ExprCond
+        '''
+        return any(expr.has_table for expr in self.children)
+
+    def extract_subexprs(self, threshold, callback, allow_extract_table):
         for subexpr in self.children:
-            subexpr.extract_subexprs(threshold, callback, allow_new)
+            subexpr.extract_subexprs(threshold, callback, allow_extract_table)
 
     def __add__(self, r):
         return Add(self, r)
@@ -211,15 +216,11 @@ class Expr(metaclass=ExprMeta):
 
 
 class ExprVar(Expr):
-    __slots__ = 'rtype',
-
     def __init__(self, type):
         self.rtype = type
 
 
 class ExprFixedVar(ExprVar):
-    __slots__ = 'name',
-
     def __init__(self, type, name):
         super().__init__(type)
         self.name = name
@@ -229,7 +230,6 @@ class ExprFixedVar(ExprVar):
 
 
 class ExprTempVar(ExprVar):
-    __slots__ = 'var',
     _name_cache = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ')
 
     def __init__(self, type, var):
@@ -309,10 +309,6 @@ class ExprConst(Expr):
             return value_s + 'u'
         else:
             return 'UINT64_C({})'.format(value_s)
-
-    def _complicated(self, threshold):
-        # Always assign 64-bit constant to a variable for readability.
-        return (self.rtype == 64)
 
     @staticmethod
     def combine(const_exprs):
@@ -402,22 +398,21 @@ class ExprAdd(Expr):
 
         return self
 
-    def extract_subexprs(self, threshold, callback, allow_new):
+    def extract_subexprs(self, threshold, callback, allow_extract_table):
         exprs = []
         for expr in self.exprs:
-            expr.extract_subexprs(threshold, callback, allow_new)
-            expr = callback(expr, allow_new and expr._complicated(threshold))
+            expr.extract_subexprs(threshold, callback, allow_extract_table)
+            expr = callback(expr, allow_extract_table,
+                            expr._complicated(threshold))
             exprs.append(expr)
         self.exprs = tuple(exprs)
 
         if self.const:
-            self.const = callback(
-                self.const, allow_new and self.const._complicated(threshold))
+            self.const = callback(self.const, allow_extract_table,
+                                  self.const._complicated(threshold))
 
 
 class ExprBinary(Expr):
-    __slots__ = 'left', 'right', 'rtype'
-
     def __init__(self, left, right, rtype=None, *, max=max):
         self.left = left = left.optimized
         self.right = right = right.optimized
@@ -427,12 +422,12 @@ class ExprBinary(Expr):
     def children(self):
         return self.left, self.right
 
-    def extract_subexprs(self, threshold, callback, allow_new):
-        super().extract_subexprs(threshold, callback, allow_new)
-        self.left = callback(self.left,
-                             allow_new and self.left._complicated(threshold))
-        self.right = callback(self.right,
-                              allow_new and self.right._complicated(threshold))
+    def extract_subexprs(self, threshold, callback, allow_extract_table):
+        super().extract_subexprs(threshold, callback, allow_extract_table)
+        self.left = callback(self.left, allow_extract_table,
+                             self.left._complicated(threshold))
+        self.right = callback(self.right, allow_extract_table,
+                              self.right._complicated(threshold))
 
 
 class ExprShift(ExprBinary):
@@ -800,10 +795,13 @@ class ExprCast(Expr):
 
         return self
 
+    def extract_subexprs(self, threshold, callback, allow_extract_table):
+        super().extract_subexprs(threshold, callback, allow_extract_table)
+        self.value = callback(self.value, allow_extract_table,
+                              self.value._complicated(threshold))
+
 
 class ExprCond(Expr):
-    __slots__ = 'cond', 'exprT', 'exprF', 'rtype'
-
     def __init__(self, cond, exprT, exprF):
         self.cond = cond.optimized
         self.exprT = exprT.optimized
@@ -817,25 +815,27 @@ class ExprCond(Expr):
     def children(self):
         return self.cond, self.exprT, self.exprF
 
-    def extract_subexprs(self, threshold, callback, allow_new):
-        # It can be unsafe to evaluate exprT or exprF without first checking
-        # cond
+    def extract_subexprs(self, threshold, callback, allow_extract_table):
         if not self.cond.IS_VAR:
-            self.cond.extract_subexprs(threshold, callback, allow_new)
-            self.cond = callback(
-                self.cond, allow_new and self.cond._complicated(threshold))
-        if not allow_new:
-            self.exprT = callback(self.exprT, False)
-            self.exprF = callback(self.exprF, False)
-        self.exprT.extract_subexprs(threshold, callback, False)
-        self.exprF.extract_subexprs(threshold, callback, False)
+            self.cond.extract_subexprs(threshold, callback,
+                                       allow_extract_table)
+            self.cond = callback(self.cond, allow_extract_table,
+                                 self.cond._complicated(threshold))
 
-    def _complicated(self, threshold):
-        # Always assign to a variable for readability.
-        return True
+        # Tables in exprT and exprF cannot be safely extracted
+        allow_extract_table = False
+
+        self.exprT.extract_subexprs(threshold, callback, allow_extract_table)
+        self.exprF.extract_subexprs(threshold, callback, allow_extract_table)
+        self.exprT = callback(self.exprT, allow_extract_table,
+                              self.exprT._complicated(threshold))
+        self.exprF = callback(self.exprF, allow_extract_table,
+                              self.exprF._complicated(threshold))
 
 
 class ExprTable(Expr):
+    has_table = True
+
     def __init__(self, type, name, values, var, offset):
         self.rtype = type
         self.name = name
@@ -918,10 +918,10 @@ class ExprTable(Expr):
     def table_bytes(self, *, type_bytes=type_bytes):
         return self.values.size * type_bytes(self.rtype)
 
-    def extract_subexprs(self, threshold, callback, allow_new):
-        super().extract_subexprs(threshold, callback, allow_new)
-        self.var = callback(self.var,
-                            allow_new and self.var._complicated(threshold))
+    def extract_subexprs(self, threshold, callback, allow_extract_table):
+        super().extract_subexprs(threshold, callback, allow_extract_table)
+        self.var = callback(self.var, allow_extract_table,
+                            self.var._complicated(threshold))
 
     def _complicated(self, _threshold):
         return True
