@@ -464,18 +464,8 @@ class MakeCodeForRange:
             for stride in (1024, 512, 256, 128, 64, 32, 16, 8, 4, 2):
                 if stride * 8 > num:
                     continue
-                snum = (num + stride - 1) // stride
-                if snum * stride != num:
-                    values_padded = np.concatenate(
-                        [values,
-                         np.ones(snum * stride - num, dtype=np.uint32) * values[-1]])
-                else:
-                    values_padded = values
-                base_values = np.min(np.reshape(values_padded, (snum, stride)),
-                                     axis=1)
-                base_values_full = np.reshape(np.vstack([base_values] * stride).T,
-                                              snum * stride)[:num]
-                delta = values - base_values_full
+                base_values = utils.np_min_by_chunk(values, stride)
+                delta = values - np.repeat(base_values, stride)[:num]
                 if (np.count_nonzero(delta) < values_nonzeros / (stride * .9) or
                         utils.np_max(delta).bit_length() <= maxv_bits // 2):
                     base_inexpr = (inexpr - lo) // stride

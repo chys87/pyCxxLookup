@@ -127,11 +127,7 @@ typename std::make_unsigned<T>::type do_gcd_many(VectorView<T> data) {
     UT v = do_abs(data.next());
     if (v == prev) continue;
     prev = v;
-    if (res < v) {
-      UT t = v;
-      v = res;
-      res = t;
-    }
+    if (res < v) std::swap(res, v);
     while (v) {
       UT t = res % v;
       res = v;
@@ -561,6 +557,41 @@ PyObject* array_cycle(PyObject* self, PyObject* args) {
   return PyLong_FromLong(0);
 }
 
+// min_by_chunk(array, chunk_size)
+PyObject* min_by_chunk(PyObject* self, PyObject* args) {
+  PyArrayObject* array;
+  unsigned chunk_size;
+  if (!PyArg_ParseTuple(args, "O!I", &PyArray_Type, &array, &chunk_size))
+    return nullptr;
+  if (PyArray_NDIM(array) != 1) [[unlikely]]
+    Py_RETURN_NONE;
+  if (PyArray_TYPE(array) != NPY_UINT32) [[unlikely]]
+    Py_RETURN_NONE;
+
+  size_t n = PyArray_DIMS(array)[0];
+  size_t chunks = (n + chunk_size - 1) / chunk_size;
+
+  npy_intp dims[1] = {npy_intp(chunks)};
+
+  PyArray_Descr* descr = PyArray_DESCR(array);
+  Py_INCREF(descr);
+  PyArrayObject* out_obj =
+      reinterpret_cast<PyArrayObject*>(PyArray_Empty(1, dims, descr, 0));
+  if (out_obj == nullptr) return nullptr;
+
+  uint32_t* pw = static_cast<uint32_t*>(PyArray_DATA(out_obj));
+  {
+    VectorView<uint32_t> view(array);
+    while (view) {
+      uint32_t v = view.next();
+      for (unsigned i = 1; i < chunk_size && view; ++i)
+        v = std::min(v, view.next());
+      *pw++ = v;
+    }
+  }
+  return reinterpret_cast<PyObject*>(out_obj);
+}
+
 
 // format_c_array(array, type, name_str)
 PyObject* format_c_array(PyObject* self, PyObject* args) {
@@ -630,6 +661,8 @@ PyMethodDef speedups_methods[] = {
      "Return whether two arrays are equal"},
     {"array_cycle", &array_cycle, METH_VARARGS,
      "Find minimum positive cycle of an array"},
+    {"min_by_chunk", &min_by_chunk, METH_VARARGS,
+     "Find minimum values by chunk"},
     {"format_c_array", &format_c_array, METH_VARARGS,
      "Format a NumPy string as a C array"},
     {NULL, NULL, 0, NULL}};

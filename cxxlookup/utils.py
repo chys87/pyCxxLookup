@@ -256,6 +256,32 @@ def np_max(array, *, min_max=_speedups and _speedups.min_max):
     return int(array.max())
 
 
+def np_min_by_chunk(array, chunk_size, *,
+                    min_by_chunk=_speedups and _speedups.min_by_chunk):
+    '''Return the minimum values of each fixed-size chunk
+
+    _speedups only implements uint32
+
+    >>> np_min_by_chunk(np.array([1, 2, 2, 1, 3], np.uint32), 2).tolist()
+    [1, 1, 3]
+    >>> np_min_by_chunk(np.array([1, 2, 2, 1, 3], np.int64), 2).tolist()
+    [1, 1, 3]
+    '''
+    if min_by_chunk:
+        res = min_by_chunk(array, chunk_size)
+        if res is not None:
+            return res
+
+    n, = array.shape
+    chunks = (n + chunk_size - 1) // chunk_size
+    padded_size = chunks * chunk_size
+    if n == padded_size:
+        padded = array
+    else:
+        padded = np.pad(array, (0, padded_size - n), 'edge')
+    return np.min(np.reshape(padded, (chunks, chunk_size)), axis=1)
+
+
 def np_range(array, *, min_max=_speedups and _speedups.min_max):
     '''
     >>> np_range(np.array([3,2,1,2,3], np.uint32))
