@@ -43,6 +43,20 @@ except ImportError:
     _speedups = None
 
 
+def is_pow2(v):
+    '''
+    >>> is_pow2(0)
+    False
+    >>> is_pow2(1)
+    True
+    >>> is_pow2(2)
+    True
+    >>> is_pow2(3)
+    False
+    '''
+    return v > 0 and not (v & (v - 1))
+
+
 def make_numpy_array(values):
     return np.array(values, dtype=np.uint32)
 

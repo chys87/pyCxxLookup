@@ -606,7 +606,7 @@ class ExprMul(ExprBinary):
                 return Const(32, 0)
             elif rv == 1:
                 return left
-            elif (rv > 0) and (rv & (rv - 1)) == 0:  # Power of 2
+            elif utils.is_pow2(rv):
                 expr = ExprLShift(left, Const(32, rv.bit_length() - 1))
                 return expr.optimized
 
@@ -653,7 +653,7 @@ class ExprDiv(ExprBinary):
                 raise ZeroDivisionError
             elif rv == 1:
                 return left
-            elif (rv & (rv - 1)) == 0:
+            elif utils.is_pow2(rv):
                 expr = ExprRShift(left, Const(32, rv.bit_length() - 1))
                 return expr.optimized
 

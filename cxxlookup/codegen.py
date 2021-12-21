@@ -688,9 +688,9 @@ class MakeCodeForRange:
     def _check_nearby_power_of_two(self, v):
         yield v
         if v >= 3:
-            if (v & (v + 1)) == 0:
+            if utils.is_pow2(v + 1):
                 yield v + 1
-            if ((v - 1) & (v - 2)) == 0:
+            if utils.is_pow2(v - 1):
                 yield v - 1
 
     def _overhead(self, expr, *, id=id):
