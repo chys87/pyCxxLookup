@@ -207,16 +207,17 @@ class MakeCodeForRange:
         return expr, subexprs
 
     def _make_code(self, lo, values, table_name, inexpr, inexpr_long=None,
-                   addition=0, *, maxdepth, **kwargs):
+                   inexpr_base0=None, addition=0, *, maxdepth, **kwargs):
         exprs = (expr.optimized for expr in
                  self._yield_code(lo, values, table_name, inexpr,
-                                  inexpr_long, addition, maxdepth=maxdepth,
-                                  **kwargs))
+                                  inexpr_long, inexpr_base0, addition=addition,
+                                  maxdepth=maxdepth, **kwargs))
         return min(exprs, key=self._overhead)
 
     def _yield_code(self, lo, values, table_name, inexpr, inexpr_long=None,
-                    addition=0,
+                    inexpr_base0=None,
                     *,
+                    addition=0,
                     maxdepth,
                     uniqs=None, skip_gcd_reduce=False,
                     skip_almost_linear_reduce=False,
@@ -265,8 +266,16 @@ class MakeCodeForRange:
             inexpr = inexpr.optimized
             inexpr_long = inexpr_long.optimized
 
+        if lo == 0:
+            inexpr_base0 = inexpr
+        elif inexpr_base0:
+            inexpr_base0 = inexpr_base0.optimized
+        else:
+            inexpr_base0 = (inexpr - lo).optimized
+
         assert inexpr.rtype in (8, 16, 32), inexpr
         assert inexpr_long.rtype in (8, 16, 32, 64), inexpr_long
+        assert inexpr_base0.rtype in (8, 16, 32), inexpr_base0
 
         # Constant
         if uniq == 1:
@@ -291,7 +300,7 @@ class MakeCodeForRange:
         if (uniq == num) and utils.is_linear(values):
             slope = int(values[1]) - int(values[0])
             # (c - lo) * slope + addition
-            expr = inexpr - lo
+            expr = inexpr_base0
             if slope != 1:
                 expr = expr * slope
             add = int(values[0]) + addition
@@ -338,7 +347,7 @@ class MakeCodeForRange:
                     mask |= 1 << int(k)
 
                 Bits = 64 if num > 32 else 32
-                expr = (Const(Bits, mask) >> (inexpr - lo)) & 1
+                expr = (Const(Bits, mask) >> inexpr_base0) & 1
                 if (value1 + addition != 1) or (value0 + addition != 0):
                     expr = Cond(expr, value1 + addition, value0 + addition)
                 elif Bits > 32:
@@ -354,7 +363,7 @@ class MakeCodeForRange:
             if cycle:
                 yield from self._yield_code(0, values[:cycle],
                                             table_name + '_cycle',
-                                            (inexpr - lo) % cycle,
+                                            inexpr_base0 % cycle,
                                             addition=addition,
                                             maxdepth=maxdepth-1)
                 return
@@ -383,7 +392,7 @@ class MakeCodeForRange:
                     left_expr = self._make_code(
                         lo, values[:split_pos],
                         table_name + '_l',
-                        inexpr, inexpr_long,
+                        inexpr, inexpr_long, inexpr_base0,
                         addition=addition,
                         maxdepth=maxdepth-1)
                     right_expr = Const(32, int(values[-1]) + addition)
@@ -408,7 +417,7 @@ class MakeCodeForRange:
             mask = 0
             for k, v in enumerate(values):
                 mask |= (int(v) + offset) << (k * bits)
-            expr = (inexpr - lo) * bits
+            expr = inexpr_base0 * bits
             expr = Cast(32, Const(Bits, mask) >> expr) & ((1 << bits) - 1)
             add = addition - offset
             if add:
@@ -435,12 +444,13 @@ class MakeCodeForRange:
                     expr = self._make_code(lo, reduced_values,
                                            table_name + '_reduced',
                                            inexpr, inexpr_long,
+                                           inexpr_base0,
                                            addition=offset+addition,
                                            uniqs=reduced_uniqs,
                                            skip_almost_linear_reduce=True,
                                            maxdepth=maxdepth-1)
 
-                    yield (inexpr - lo) * slope + expr
+                    yield inexpr_base0 * slope + expr
 
             div = self._check_monotonic_increasing(values)
             if div is not None:
@@ -452,11 +462,12 @@ class MakeCodeForRange:
                     expr = self._make_code(lo, reduced_values,
                                            table_name + '_div',
                                            inexpr, inexpr_long,
+                                           inexpr_base0,
                                            addition=addition,
                                            skip_almost_linear_reduce=True,
                                            maxdepth=maxdepth-1)
 
-                    yield (inexpr - lo) // div + expr
+                    yield inexpr_base0 // div + expr
 
         # Consecutive values are similar
         if not skip_stride and maxdepth > 0:
@@ -468,15 +479,16 @@ class MakeCodeForRange:
                 delta = values - np.repeat(base_values, stride)[:num]
                 if (np.count_nonzero(delta) < values_nonzeros / (stride * .9) or
                         utils.np_max(delta).bit_length() <= maxv_bits // 2):
-                    base_inexpr = (inexpr - lo) // stride
+                    base_inexpr = inexpr_base0 // stride
                     base_expr = self._make_code(
-                            0, base_values, table_name + '_stride{}'.format(stride),
-                            base_inexpr, base_inexpr, addition=addition,
-                            skip_stride=True,
+                            0, base_values,
+                            table_name + '_stride{}'.format(stride),
+                            base_inexpr, addition=addition, skip_stride=True,
                             maxdepth=maxdepth-1)
                     delta_expr = self._make_code(
-                            lo, delta, table_name + '_stride{}delta'.format(stride),
-                            inexpr, inexpr_long,
+                            lo, delta,
+                            table_name + '_stride{}delta'.format(stride),
+                            inexpr, inexpr_long, inexpr_base0,
                             maxdepth=maxdepth-1)
                     yield base_expr + delta_expr
 
@@ -485,7 +497,7 @@ class MakeCodeForRange:
             indices = np.searchsorted(uniqs, values)
             # Level 1
             expr = self._make_code(lo, indices, table_name + '_index',
-                                   inexpr, inexpr_long,
+                                   inexpr, inexpr_long, inexpr_base0,
                                    uniqs=np.arange(uniq, dtype=np.uint32),
                                    maxdepth=maxdepth-1)
 
@@ -508,12 +520,12 @@ class MakeCodeForRange:
                 offset = addition
             compressed_values = utils.compress_array(values + offset, 2)
 
-            expr = inexpr - lo
+            expr = inexpr_base0
             # (table[expr/2] >> (expr%2*4)) & 15
             expr_shift = expr >> 1
             expr_left = self._make_code(0, compressed_values,
                                         table_name + '_4bits',
-                                        expr_shift, expr_shift,
+                                        expr_shift,
                                         skip_split_4bits_hi_lo=False,
                                         maxdepth=maxdepth-1)
             expr_right = (expr & 1) << 2
@@ -526,13 +538,12 @@ class MakeCodeForRange:
         if maxv_bits == 2 and num > 32 and maxdepth > 0:
             compressed_values = utils.compress_array(values, 4)
 
-            expr = inexpr - lo
+            expr = inexpr_base0
             # (table[expr/4] >> (expr%4*2)) & 3
             expr_shift = expr >> 2
             expr_left = self._make_code(0, compressed_values,
                                         table_name + '_2bits',
-                                        expr_shift, expr_shift,
-                                        maxdepth=maxdepth-1)
+                                        expr_shift, maxdepth=maxdepth-1)
             expr_right = (expr & 3) << 1
             expr = (expr_left >> expr_right) & 3
             expr = expr + addition
@@ -543,13 +554,12 @@ class MakeCodeForRange:
         if (maxv == 1) and num > 64 and maxdepth > 0:
             compressed_values = utils.compress_array(values, 8)
 
-            expr = inexpr - lo
+            expr = inexpr_base0
             # (table[expr/8] >> (expr%8)) & 1
             expr_shift = expr >> 3
             expr_left = self._make_code(0, compressed_values,
                                         table_name + '_bitvec',
-                                        expr_shift, expr_shift,
-                                        maxdepth=maxdepth-1)
+                                        expr_shift, maxdepth=maxdepth-1)
             expr_right = expr & 7
             expr = (expr_left >> expr_right) & 1
             expr = expr + addition
@@ -563,7 +573,7 @@ class MakeCodeForRange:
                 offset = int(values[0]) % gcd
                 reduced_values = values // gcd
                 expr = self._make_code(lo, reduced_values, table_name + '_gcd',
-                                       inexpr, inexpr_long,
+                                       inexpr, inexpr_long, inexpr_base0,
                                        skip_gcd_reduce=True,
                                        maxdepth=maxdepth-1)
                 yield expr * gcd + (addition + offset)
@@ -618,12 +628,12 @@ class MakeCodeForRange:
 
                 lo_expr = self._make_code(
                     lo, lo_values, '{}_{}lo'.format(table_name, k),
-                    inexpr, inexpr_long, addition=addition,
+                    inexpr, inexpr_long, inexpr_base0, addition=addition,
                     uniqs=lo_uniqs,
                     maxdepth=maxdepth-1)
                 hi_expr = self._make_code(
                     lo, hi_values, '{}_{}hi'.format(table_name, k),
-                    inexpr, inexpr_long,
+                    inexpr, inexpr_long, inexpr_base0,
                     uniqs=hi_uniqs,
                     maxdepth=maxdepth-1)
                 yield lo_expr + hi_expr * hi_gcd
