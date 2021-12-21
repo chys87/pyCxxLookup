@@ -132,8 +132,10 @@ def _naive_groupify(base, values, opt):
 
 def _refine_groups(group, hole, opt):
     # Split a group if it takes the form: [a,...,a,b,...,b]
-    # Do it unconditionally!
+    # Do it almost unconditionally, but not if it's [a,a+1]
     for lo, values in list(group.items()):
+        if values.size == 2 and values[1] == values[0] + 1:
+            continue
         k = utils.const_range(values)
         if k < values.size and utils.is_const(values[k:]):
             group[lo + k] = values[k:]
