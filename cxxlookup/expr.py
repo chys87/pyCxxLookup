@@ -272,11 +272,33 @@ class ExprTempVar(ExprVar):
 
 
 class ExprConst(Expr):
-    __slots__ = 'rtype', 'value'
+    _POOL_SIZE = 4096
+    _pool = [None] * _POOL_SIZE
 
-    def __init__(self, type, value, *, int=int):
+    def __init__(self, type, value, *, pooled=False, int=int):
         self.rtype = type
         self.value = int(value)
+        self.pooled = pooled
+
+    @staticmethod
+    def make(type, value):
+        cls = ExprConst
+        if type == 32 and 0 <= value < cls._POOL_SIZE:
+            res = cls._pool[value]
+            if res is None:
+                cls._pool[value] = res = cls(type, value, pooled=True)
+            return res
+        return cls(type, value)
+
+    @utils.cached_property
+    def optimized(self):
+        if not self.pooled and self.rtype == 32 and \
+                0 <= (value := self.value) < self._POOL_SIZE:
+            res = self._pool[self.value]
+            if res is None:
+                self.pooled = True
+                self._pool[value] = res = self
+        return self
 
     def __str__(self):
         if -10 < self.value < 10:
@@ -303,10 +325,10 @@ class ExprConst(Expr):
         if const_value == 0:
             return None
         else:
-            return ExprConst(const_type, const_value)
+            return ExprConst.make(const_type, const_value)
 
     def __neg__(self):
-        return ExprConst(self.rtype, -self.value)
+        return Const(self.rtype, -self.value)
 
 
 class ExprAdd(Expr):
@@ -324,8 +346,7 @@ class ExprAdd(Expr):
             if const_value >= 0:
                 res += ' + ' + str(self.const)
             else:
-                res += ' - ' + str(ExprConst(self.const.rtype,
-                                             -const_value))
+                res += ' - ' + str(Const(self.const.rtype, -const_value))
         return '(' + res + ')'
 
     @property
@@ -367,8 +388,8 @@ class ExprAdd(Expr):
                          >= 0):
                     expr = ExprCond(
                         expr.cond,
-                        ExprConst(self.rtype, expr.exprT.value + const_value),
-                        ExprConst(self.rtype, expr.exprF.value + const_value))
+                        Const(self.rtype, expr.exprT.value + const_value),
+                        Const(self.rtype, expr.exprF.value + const_value))
                     exprs[i] = expr.optimized
                     const = None
                     break
@@ -438,7 +459,7 @@ class ExprLShift(ExprShift):
         right_const = right.IS_CONST
 
         if right_const and left.IS_CONST:
-            return ExprConst(self.rtype, left.value << right.value)
+            return Const(self.rtype, left.value << right.value)
 
         # "(a & c1) << c2" ==> (a << c2) & (c1 << c2) (where c2 <= 3)
         # This takes advantage of x86's LEA instruction
@@ -446,8 +467,8 @@ class ExprLShift(ExprShift):
                 left.IS_AND and \
                 left.right.IS_CONST:
             expr_left = ExprLShift(left.left, right)
-            expr_right = ExprConst(left.right.rtype,
-                                   left.right.value << right.value)
+            expr_right = Const(left.right.rtype,
+                               left.right.value << right.value)
             return ExprAnd(expr_left, expr_right).optimized
 
         # (cond ? c1 : c2) << c3 ==> (cond ? c1 << c3 : c2 << c3)
@@ -469,11 +490,11 @@ class ExprLShift(ExprShift):
             c2 = right.value
             c1 = left.right.value
             if c2 > c1:
-                expr = ExprLShift(left.left, ExprConst(32, c2 - c1))
+                expr = ExprLShift(left.left, Const(32, c2 - c1))
             elif c2 == c1:
                 expr = left.left
             else:
-                expr = ExprRShift(left.left, ExprConst(32, c1 - c2))
+                expr = ExprRShift(left.left, Const(32, c1 - c2))
             and_value = ((1 << c2) - 1) ^ ((1 << expr.rtype) - 1)
             expr = ExprAnd(expr, Const(expr.rtype, and_value))
             return expr.optimized
@@ -483,8 +504,8 @@ class ExprLShift(ExprShift):
                 left.IS_ADD and len(left.exprs) == 1 and \
                 left.const:
             expr_left = ExprLShift(left.exprs[0], right)
-            expr_right = ExprConst(left.const.rtype,
-                                   left.const.value << right.value)
+            expr_right = Const(left.const.rtype,
+                               left.const.value << right.value)
             return ExprAdd((expr_left,), expr_right).optimized
 
         return self
@@ -537,9 +558,9 @@ class ExprRShift(ExprShift):
                     compensation += 1
                     remainder -= 1 << c2
 
-                expr = ExprAdd(left.exprs, ExprConst(ctype, remainder))
-                expr = ExprRShift(expr, ExprConst(32, c2))
-                expr = ExprAdd((expr,), ExprConst(ctype, compensation))
+                expr = ExprAdd(left.exprs, Const(ctype, remainder))
+                expr = ExprRShift(expr, Const(32, c2))
+                expr = ExprAdd((expr,), Const(ctype, compensation))
                 return expr.optimized
 
         # (a >> c1) >> c2 ==> a >> (c1 + c2)
@@ -565,8 +586,7 @@ class ExprMul(ExprBinary):
 
         # Both constants
         if right_const and left.IS_CONST:
-            return ExprConst(self.rtype,
-                             left.value * right.value)
+            return Const(self.rtype, left.value * right.value)
 
         # Put constant on the right side
         if not right_const and left.IS_CONST:
@@ -577,11 +597,11 @@ class ExprMul(ExprBinary):
             # Strength reduction (* => <<)
             rv = right.value
             if rv == 0:
-                return ExprConst(32, 0)
+                return Const(32, 0)
             elif rv == 1:
                 return left
             elif (rv > 0) and (rv & (rv - 1)) == 0:  # Power of 2
-                expr = ExprLShift(left, ExprConst(32, rv.bit_length() - 1))
+                expr = ExprLShift(left, Const(32, rv.bit_length() - 1))
                 return expr.optimized
 
             # (a + c1) * c2 ==> (a * c2 + c1 * c2)
@@ -603,7 +623,7 @@ class ExprMul(ExprBinary):
             if left.IS_AND and \
                     left.right.IS_CONST and \
                     left.right.value == 1:
-                expr = ExprCond(left, right, ExprConst(self.rtype, 0))
+                expr = ExprCond(left, right, Const(self.rtype, 0))
                 return expr.optimized
 
         return self
@@ -631,7 +651,7 @@ class ExprDiv(ExprBinary):
             elif rv == 1:
                 return left
             elif (rv & (rv - 1)) == 0:
-                expr = ExprRShift(left, ExprConst(32, rv.bit_length() - 1))
+                expr = ExprRShift(left, Const(32, rv.bit_length() - 1))
                 return expr.optimized
 
         return self
@@ -650,7 +670,7 @@ class ExprMod(ExprBinary):
             value = right.value
             if value and (value & (value - 1)) == 0:
                 return ExprAnd(self.left,
-                               ExprConst(right.rtype, value - 1)).optimized
+                               Const(right.rtype, value - 1)).optimized
         return self
 
 
@@ -681,7 +701,7 @@ class ExprAnd(ExprBinary):
             if c1p & (1 << (bt - 1)):
                 c1p |= ~((1 << bt) - 1)
             if c1p != c1:
-                left = ExprAdd(left.exprs, ExprConst(left.const.rtype, c1p))
+                left = ExprAdd(left.exprs, Const(left.const.rtype, c1p))
                 self.left = left = left.optimized
 
         # (a & c1) & c2 ==> a & (c1 & c2)
@@ -734,8 +754,8 @@ class ExprCompare(ExprBinary):
             c1 = left.right.value
             c2 = right.value
             if ((c2 + 1) << c1) <= 2**32:
-                expr = ExprAdd((left.left,), ExprConst(32, -(c2 << c1)))
-                expr = ExprCompare(expr, '<', ExprConst(32, 1 << c1))
+                expr = ExprAdd((left.left,), Const(32, -(c2 << c1)))
+                expr = ExprCompare(expr, '<', Const(32, 1 << c1))
                 return expr.optimized
 
         # (a >> c1) < c2
@@ -748,7 +768,7 @@ class ExprCompare(ExprBinary):
             c1 = left.right.value
             c2 = right.value
             if (c2 << c1) < 2**32:
-                expr = ExprCompare(left.left, '<', ExprConst(32, c2 << c1))
+                expr = ExprCompare(left.left, '<', Const(32, c2 << c1))
                 return expr.optimized
 
         return self
@@ -914,7 +934,7 @@ def exprize(expr, *,
     if isinstance(expr, Expr):
         return expr
     else:
-        return ExprConst(32, expr)
+        return Const(32, expr)
 
 
 FixedVar = ExprFixedVar
@@ -923,7 +943,7 @@ FixedVar = ExprFixedVar
 TempVar = ExprTempVar
 
 
-Const = ExprConst
+Const = ExprConst.make
 
 
 def Add(*in_exprs):
@@ -943,7 +963,7 @@ def Add(*in_exprs):
 
     const_expr = ExprConst.combine(const_exprs)
     if not exprs:
-        return const_expr or ExprConst(32, 0)
+        return const_expr or Const(32, 0)
     elif len(exprs) == 1 and not const_expr:
         return exprs[0]
     else:
