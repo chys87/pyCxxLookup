@@ -707,6 +707,8 @@ class MakeCodeForRange:
                 extra += 2
             elif x.IS_CAST:
                 pass
+            elif x.IS_CONST:
+                extra += (x.rtype > 32) + 1
             elif x.IS_COND:
                 extra += 3
             elif x.IS_DIV_MOD:

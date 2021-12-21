@@ -214,6 +214,13 @@ class Expr(metaclass=ExprMeta):
     __rmul__ = __mul__
     __rand__ = __and__
 
+    @utils.cached_property
+    def is_predicate(self):
+        '''Returns whether the expression is likely a predicate
+        (i.e. can only return 0 or 1)
+        '''
+        return False
+
 
 class ExprVar(Expr):
     def __init__(self, type):
@@ -330,7 +337,7 @@ class ExprConst(Expr):
 class ExprAdd(Expr):
     def __init__(self, exprs, const, *, max=max, tuple=tuple):
         assert const is None or const.IS_CONST
-        self.exprs = tuple(exprs)
+        self.exprs = tuple(expr.optimized for expr in exprs)
         self.const = const
         rtype = max([x.rtype for x in self.children])
         self.rtype = max(rtype, 31)  # C type-promotion rule
@@ -465,6 +472,13 @@ class ExprLShift(ExprShift):
             expr_right = Const(left.right.rtype,
                                left.right.value << right.value)
             return ExprAnd(expr_left, expr_right).optimized
+
+        # PREDICATE << c  ==>  PREDICATE ? (1 << c) : 0
+        if right_const and left.is_predicate:
+            expr = ExprCond(left,
+                            Const(self.rtype, 1 << right.value),
+                            Const(self.rtype, 0))
+            return expr.optimized
 
         # (cond ? c1 : c2) << c3 ==> (cond ? c1 << c3 : c2 << c3)
         if right_const and \
@@ -614,12 +628,9 @@ class ExprMul(ExprBinary):
                                 ExprMul(left.exprF, right))
                 return expr.optimized
 
-            # (a & 1) * c ==> (a & 1) ? c : 0
-            if left.IS_AND and \
-                    left.right.IS_CONST and \
-                    left.right.value == 1:
-                expr = ExprCond(left, right, Const(self.rtype, 0))
-                return expr.optimized
+            # PREDICATE * c ==> PREDICATE ? c : 0
+            if left.is_predicate:
+                return ExprCond(left, right, Const(self.rtype, 0)).optimized
 
         return self
 
@@ -722,14 +733,35 @@ class ExprAnd(ExprBinary):
 
         return self
 
+    @utils.cached_property
+    def is_predicate(self):
+        return self.right.IS_CONST and self.right.value == 1
+
 
 class ExprCompare(ExprBinary):
+    __negate = {
+        '==': '!=',
+        '!=': '==',
+        '>': '<=',
+        '<': '>=',
+        '>=': '<',
+        '<=': '>',
+    }
+
+    is_predicate = True
+
     def __init__(self, left, compare, right):
         super().__init__(left, right, 31)
         self.compare = compare
 
     def __str__(self):
         return '({} {} {})'.format(self.left, self.compare, self.right)
+
+    @utils.cached_property
+    def negated(self):
+        neg = ExprCompare(self.left, self.__negate[self.compare], self.right)
+        neg.__dict__['negated'] = self
+        return neg
 
     @utils.cached_property
     def optimized(self):
@@ -800,6 +832,10 @@ class ExprCast(Expr):
         self.value = callback(self.value, allow_extract_table,
                               self.value._complicated(threshold))
 
+    @utils.cached_property
+    def is_predicate(self):
+        return self.value.is_predicate
+
 
 class ExprCond(Expr):
     def __init__(self, cond, exprT, exprF):
@@ -831,6 +867,47 @@ class ExprCond(Expr):
                               self.exprT._complicated(threshold))
         self.exprF = callback(self.exprF, allow_extract_table,
                               self.exprF._complicated(threshold))
+
+    @utils.cached_property
+    def optimized(self):
+        cond = self.cond
+        exprT = self.exprT
+        exprF = self.exprF
+
+        # cast(a cmp b) ? T : F ==> (a cmp b) ? T : F
+        # cast(a & 1) ? T : F ==> (a & 1) ? T : F
+        while cond.IS_CAST and \
+                (cond.value.IS_COMPARE or
+                 (cond.value.IS_AND and cond.value.right.IS_CONST and
+                  cond.value.right.value == 1)):
+            self.cond = cond = cond.value
+
+        # cond ? 1 : 0 ==> Cast(cond)
+        if (cond.IS_COMPARE and exprT.IS_CONST and exprF.IS_CONST and
+                exprT.value == 1 and exprF.value == 0):
+            return ExprCast(self.rtype, cond).optimized
+
+        # cond is (** != 0) or (** == 0)
+        if cond.IS_COMPARE and cond.right.IS_CONST and cond.right.value == 0:
+            if cond.compare == '!=':
+                return ExprCond(cond.left, exprT, exprF).optimized
+            elif cond.compare == '==':
+                return ExprCond(cond.left, exprF, exprT).optimized
+
+        # Sometimes we might want to negate thecomparator
+        # (Cannot merge this if with the previous one -- cond may have changed)
+        if cond.IS_COMPARE:
+            # (1) If both exprT and exprF are constants, swap smaller ones
+            #     to right to increase readability.
+            # (2) If one of exprT is constant and the other is ExprCond, swap
+            #     the constant to left to increase readability.
+            if (
+                    (exprT.IS_CONST and exprF.IS_CONST and
+                     exprT.value < exprF.value) or
+                    (exprF.IS_CONST and exprT.IS_COND)):
+                return ExprCond(cond.negated, exprF, exprT).optimized
+
+        return self
 
 
 class ExprTable(Expr):
