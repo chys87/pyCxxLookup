@@ -43,7 +43,7 @@ def main():
         DEFAULT_CFLAGS = \
             '-O2 -march=native -fno-exceptions -Wl,--as-needed '\
             '-fvisibility-inlines-hidden -fvisibility=hidden -flto '\
-            '-std=gnu++11'
+            '-std=gnu++17'
         os.environ.setdefault('CFLAGS', DEFAULT_CFLAGS)
         os.environ.setdefault('CXXFLAGS', DEFAULT_CFLAGS)
 

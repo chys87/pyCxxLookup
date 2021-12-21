@@ -36,11 +36,15 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#if __has_include(<x86intrin.h>)
+#include <x86intrin.h>
+#endif
 
 #include <algorithm>
 #include <map>
 #include <memory>
 #include <type_traits>
+#include <vector>
 
 #include <numpy/arrayobject.h>
 
@@ -58,6 +62,8 @@ class VectorView {
 
   bool more() const { return remaining_; }
   explicit operator bool() const { return more(); }
+
+  T peek() const { return *ptr_; }
 
   T next() {
     T v = *ptr_;
@@ -459,38 +465,100 @@ PyObject* array_equal(PyObject* self, PyObject* args) {
 }
 
 template <typename T>
-bool do_array_add_equal(PyArrayObject* a, T b, PyArrayObject* c, size_t n) {
-  VectorView<T> va(a);
-  VectorView<T> vc(c);
-  for (; n; --n) {
-    if (va.next() + b != vc.next()) return false;
+[[gnu::always_inline]] inline bool array_range_equal(PyArrayObject* array,
+                                                     size_t a, size_t b,
+                                                     size_t n) {
+  uintptr_t data = uintptr_t(PyArray_DATA(array));
+  ptrdiff_t stride = PyArray_STRIDES(array)[0];
+
+  const T* p = reinterpret_cast<const T*>(data + a * stride);
+  const T* q = reinterpret_cast<const T*>(data + b * stride);
+
+  if (stride == sizeof(uint32_t)) {
+    // This is the common case
+#ifdef __SSE__
+    if (n >= 4) {
+      __m128i X = _mm_loadu_si128((const __m128i*)p) ^
+                  _mm_loadu_si128((const __m128i*)q);
+      if (!_mm_testz_si128(X, X)) return false;
+      p += 4;
+      q += 4;
+      n -= 4;
+    }
+#endif
+    return memcmp(p, q, n * sizeof(uint32_t)) == 0;
+  } else {
+    for (; n; --n) {
+      if (*p != *q) return false;
+      p = reinterpret_cast<const T*>(uintptr_t(p) + stride);
+      q = reinterpret_cast<const T*>(uintptr_t(q) + stride);
+    }
+    return true;
   }
-  return true;
 }
 
-PyObject* array_add_equal(PyObject* self, PyObject* args) {
-  PyArrayObject *a, *c;
-  unsigned b;
-  if (!PyArg_ParseTuple(args, "O!IO!", &PyArray_Type, &a, &b, &PyArray_Type, &c))
-    return NULL;
+PyObject* array_cycle(PyObject* self, PyObject* args) {
+  PyArrayObject* array;
+  unsigned max_cycle;
+  if (!PyArg_ParseTuple(args, "O!I", &PyArray_Type, &array, &max_cycle))
+    return nullptr;
+  if (PyArray_TYPE(array) != NPY_UINT32) Py_RETURN_NONE;
+  if (PyArray_NDIM(array) != 1) Py_RETURN_NONE;
 
-  int type = PyArray_TYPE(a);
-  if (type != PyArray_TYPE(c)) Py_RETURN_NONE;
+  size_t nn = PyArray_DIMS(array)[0];
+  uint32_t n = nn;
+  if (nn < 2) return PyLong_FromLong(0);
+  if (nn != n) Py_RETURN_NONE;
 
-  if (PyArray_NDIM(a) != 1 || PyArray_NDIM(c) != 1) Py_RETURN_NONE;
+  // Typical Linux stack size is 8 MiB
+  constexpr size_t kStackAlloc = 1024 * 1024 / sizeof(uint32_t);
+  uint32_t indices_stack_alloc[kStackAlloc];
+  std::unique_ptr<uint32_t[]> indices_new(n <= kStackAlloc ? nullptr
+                                                           : new uint32_t[n]);
+  uint32_t* indices =
+      (n <= kStackAlloc) ? indices_stack_alloc : indices_new.get();
+  uint32_t ind_n = 0;
 
-  size_t n = PyArray_DIMS(a)[0];
-  if (n != PyArray_DIMS(c)[0]) Py_RETURN_NONE;
-
-  bool r;
-  switch (type) {
-    case NPY_UINT32:
-      r = do_array_add_equal<uint32_t>(a, b, c, n);
-      break;
-    default:
-      Py_RETURN_NONE;
+  {
+    VectorView<uint32_t> view(array);
+    uint32_t first = view.peek();
+    uint32_t i = 0;
+    while (view) {
+      if (view.next() == first) indices[ind_n++] = i;
+      ++i;
+    }
   }
-  return PyBool_FromLong(r);
+
+  // Special case: constant array
+  if (ind_n == n) return PyLong_FromLong(1);
+
+  for (uint32_t i = 1; i < ind_n; ++i) {
+    uint32_t k = indices[i];
+    if (k > max_cycle) break;
+
+    // Check whether indices are likely correct
+    {
+      bool ok = true;
+      for (uint32_t j = i * 2; j < ind_n; j += i) {
+        if (indices[j] != indices[j - i] + k) {
+          ok = false;
+          break;
+        }
+      }
+      if (!ok) continue;
+    }
+
+    // Compare array slices
+    bool ok = true;
+    for (uint32_t j = k; j < n; j += k) {
+      if (!array_range_equal<uint32_t>(array, 0, j, std::min(n - j, k))) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) return PyLong_FromLong(k);
+  }
+  return PyLong_FromLong(0);
 }
 
 
@@ -560,8 +628,8 @@ PyMethodDef speedups_methods[] = {
      "Create the \"slope array\" of a given array"},
     {"array_equal", &array_equal, METH_VARARGS,
      "Return whether two arrays are equal"},
-    {"array_add_equal", &array_add_equal, METH_VARARGS,
-     "Return whether a + b == c"},
+    {"array_cycle", &array_cycle, METH_VARARGS,
+     "Find minimum positive cycle of an array"},
     {"format_c_array", &format_c_array, METH_VARARGS,
      "Format a NumPy string as a C array"},
     {NULL, NULL, 0, NULL}};

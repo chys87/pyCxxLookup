@@ -282,32 +282,35 @@ def np_array_equal(x, y, *, array_equal=_speedups and _speedups.array_equal):
     return (x == y).all()
 
 
-def np_array_add_equal(
-        a, b, c, *, array_add_equal=_speedups and _speedups.array_add_equal,
-        isinstance=isinstance, int=int):
-    '''Test whether a + b is equal to c
-
-    Optimized for a and c are arrays, and b is an integer
-    '''
-    if array_add_equal and isinstance(b, int) and 0 <= b <= 0xffffffff:
-        res = array_add_equal(a, b, c)
-        if res is not None:
-            return res
-    return np_array_equal(a + b, c)
-
-
 def np_cycle(array, *, max_cycle=None,
-             np_array_equal=np_array_equal,
-             np_array_add_equal=np_array_add_equal, range=range):
+             np_array_equal=np_array_equal, range=range,
+             array_cycle=_speedups and _speedups.array_cycle):
     '''Find minimun positive cycle of array.
 
-    >>> np_cycle(np.array(list(range(100)) * 9))
+    _speedups only implements uint32
+
+    >>> np_cycle(np.array([25] * 54, dtype=np.uint32))
+    1
+    >>> np_cycle(np.array([25] * 54, dtype=np.int16))
+    1
+    >>> np_cycle(np.array(list(range(100)) * 9, dtype=np.uint32))
     100
-    >>> np_cycle(np.array(list(range(100)) * 9 + list(range(50))))
+    >>> np_cycle(np.array(list(range(100)) * 9, dtype=np.uint64))
     100
-    >>> np_cycle(np.arange(100))
+    >>> np_cycle(np.array(list(range(100)) * 9 + list(range(50)), dtype=np.uint32))
+    100
+    >>> np_cycle(np.array(list(range(100)) * 9 + list(range(50)), dtype=np.uint64))
+    100
+    >>> np_cycle(np.arange(100, dtype=np.uint32))
+    0
+    >>> np_cycle(np.arange(100, dtype=np.uint64))
     0
     '''
+    if array_cycle:
+        res = array_cycle(array, max_cycle or 0xffffffff)
+        if res is not None:
+            return res
+
     n, = array.shape
     if n < 2:
         return 0
@@ -326,22 +329,16 @@ def np_cycle(array, *, max_cycle=None,
         if k > max_cycle:
             break
 
-        # Check whether indicese of full cyclees are reasonable
-        cycles = n // k
-        if cycles > 1:
-            cycles_ind_n = cycles * i
-            if cycles_ind_n > ind_n:
-                continue
-            if not indices[cycles_ind_n - 1] < cycles * k:
-                continue
-            if cycles_ind_n < ind_n and not indices[cycles_ind_n] >= cycles * k:
-                continue
-        else:
-            if not i * 2 >= ind_n:
-                continue
-            if not np_array_add_equal(indices[:ind_n-i], k, indices[i:]):
-                continue
+        # Check whether indices are likely correct
+        ok = True
+        for j in range(i * 2, ind_n, i):
+            if indices[j] != indices[j - i] + k:
+                ok = False
+                break
+        if not ok:
+            continue
 
+        # Compare array slices
         tail = n % k
         if tail and not np_array_equal(array[:tail], array[-tail:]):
             continue
