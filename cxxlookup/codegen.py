@@ -30,6 +30,7 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
+from collections import defaultdict
 import string
 
 import numpy as np
@@ -179,6 +180,20 @@ class MakeCodeForRange:
             FixedVar(32, 'c'), FixedVar(64, 'cl'),
             maxdepth=6)
 
+        # Remember how many times each expression is visited
+        # Expressions appearing more than once are always extracted
+        # (except variables and constants)
+        visited_times = defaultdict(int)
+        def visit(expr):
+            if expr.IS_VAR or expr.IS_CONST:
+                return
+            idx = id(expr)
+            visited_times[idx] += 1
+            if visited_times[idx] == 1:
+                for subexpr in expr.children:
+                    visit(subexpr)
+        visit(expr)
+
         subexprs = []
         subexpr_rev = {}
 
@@ -188,7 +203,7 @@ class MakeCodeForRange:
             idx = id(expr)
             ind = subexpr_rev.get(idx)
             if ind is None:
-                if not prefer_extracted:
+                if not prefer_extracted and visited_times.get(idx, 0) <= 1:
                     return expr
                 if not allow_extract_table and expr.has_table:
                     return expr

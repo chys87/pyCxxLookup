@@ -308,14 +308,14 @@ class ExprConst(Expr):
         return self
 
     def __str__(self):
-        if -10 < self.value < 10:
+        if -16 <= self.value <= 16:
             value_s = str(self.value)
         else:
             value_s = hex(self.value)
         if self.rtype < 64:
             return value_s + 'u'
         else:
-            return 'UINT64_C({})'.format(value_s)
+            return f'UINT64_C({value_s})'
 
     @staticmethod
     def combine(const_exprs):
@@ -413,10 +413,7 @@ class ExprAdd(Expr):
                             expr._complicated(threshold))
             exprs.append(expr)
         self.exprs = tuple(exprs)
-
-        if self.const:
-            self.const = callback(self.const, allow_extract_table,
-                                  self.const._complicated(threshold))
+        # Don't bother to do callback on self.const; it's never required
 
 
 class ExprBinary(Expr):
