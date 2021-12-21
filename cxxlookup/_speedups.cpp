@@ -379,6 +379,34 @@ PyObject* is_const(PyObject* self, PyObject* args) {
   }
 }
 
+template <typename T>
+long do_const_range(VectorView<T> data) {
+  T first = data.next();
+  long cnt = 1;
+
+  while (data) {
+    if (first != data.next()) break;
+    ++cnt;
+  }
+  return cnt;
+}
+
+PyObject* const_range(PyObject* self, PyObject* args) {
+  PyArrayObject* array;
+  if (!PyArg_ParseTuple(args, "O!", &PyArray_Type, &array)) return NULL;
+
+  if (PyArray_NDIM(array) != 1) Py_RETURN_NONE;
+  size_t n = PyArray_DIMS(array)[0];
+  if (n < 2) return PyLong_FromLong(n);
+
+  switch (PyArray_TYPE(array)) {
+    case NPY_UINT32:
+      return PyLong_FromLong(do_const_range(VectorView<uint32_t>(array)));
+    default:
+      Py_RETURN_NONE;
+  }
+}
+
 template <typename R, int NPR, typename T>
 PyObject* do_slope_array(PyArrayObject* array) {
   size_t n = PyArray_DIMS(array)[0];
@@ -655,6 +683,8 @@ PyMethodDef speedups_methods[] = {
      "Return whether an array is linear"},
     {"is_const", &is_const, METH_VARARGS,
      "Return whether an array is constant"},
+    {"const_range", &const_range, METH_VARARGS,
+     "Return the length of prefix that is constant"},
     {"slope_array", &slope_array, METH_VARARGS,
      "Create the \"slope array\" of a given array"},
     {"array_equal", &array_equal, METH_VARARGS,

@@ -96,8 +96,13 @@ def is_linear(array, *, is_linear=_speedups and _speedups.is_linear):
     return is_const(slope_array(array, array.dtype.type))
 
 
-def const_range(array):
+def const_range(array, *, const_range=_speedups and _speedups.const_range):
     """Returns the max n, such that array[:n] is a constant array"""
+    if const_range:
+        res = const_range(array)
+        if res is not None:
+            return res
+
     if array.size == 0:
         return 0
     k = (array != array[0]).tostring().find(1)
