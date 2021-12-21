@@ -74,6 +74,10 @@ def const_type(value):
         return 8
 
 
+def type_max(type):
+    return (1 << type) - 1
+
+
 class ExprMeta(type):
     """This is for performance purpose.
 

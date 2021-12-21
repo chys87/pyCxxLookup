@@ -660,13 +660,18 @@ class MakeCodeForRange:
 
         # Finally fall back to the simplest one-level table
         table_type = const_type(maxv)
-        if addition > 0 and table_type == const_type(maxv + addition):
-            expr = ExprTable(table_type, table_name, values + addition,
-                             inexpr_long, lo)
-        else:
-            expr = ExprTable(table_type, table_name, values, inexpr_long, lo)
-            if addition != 0:
-                expr = expr + addition
+        if addition > 0:
+            table_max = type_max(table_type)
+            if maxv + addition <= table_max:
+                values = values + addition
+                addition = 0
+            else:
+                values = values + (table_max - maxv)
+                addition -= table_max - maxv
+
+        expr = ExprTable(table_type, table_name, values, inexpr_long, lo)
+        if addition != 0:
+            expr = expr + addition
         yield expr
 
     def _check_monotonic_increasing(self, values):
