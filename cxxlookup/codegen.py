@@ -598,7 +598,7 @@ class MakeCodeForRange:
                 yield expr * gcd + (addition + offset)
 
         # Try splitting the data into low and high parts
-        if maxdepth > 1:
+        if maxdepth > 0:
             for k in (4, 8, 16):
                 if k >= maxv_bits:
                     break
