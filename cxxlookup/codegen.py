@@ -31,9 +31,12 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 from collections import defaultdict
+from fractions import Fraction
+import math
 import string
 
 import numpy as np
+from scipy.stats import linregress
 
 from .expr import *
 from . import groupify
@@ -445,23 +448,36 @@ class MakeCodeForRange:
             return
 
         # Most elements are almost linear, but a few outliers exist.
-        if not skip_almost_linear_reduce and maxdepth > 0:
-            slope, slope_count = utils.most_common_element_count(
-                        utils.slope_array(values, np.int64))
-            if slope and slope_count * 3 >= num:
-                reduced_values = values - np.arange(
-                    0, slope * num, slope, dtype=np.int64)
+        if not skip_almost_linear_reduce and maxdepth > 0 and num >= 3:
+            best_uniq = uniq
+            best_bits = maxv_bits
+
+            for slope_num, slope_denom in self._yield_possible_slopes(values):
+                reduced_values = values - \
+                    np.arange(0, slope_num * num, slope_num, dtype=np.int64) \
+                    // slope_denom
                 # Negative values may cause problems
                 offset = utils.np_min(reduced_values)
                 reduced_values -= offset
-                reduced_values = np.array(reduced_values, np.uint32)
+                reduced_values = reduced_values.astype(np.uint32)
                 # Be careful to avoid infinite recursion
                 reduced_uniqs = utils.np_unique(reduced_values)
-                if reduced_uniqs.size * 2 <= uniq or \
-                        int(reduced_uniqs[-1]).bit_length() <= maxv_bits // 2:
+                reduced_uniq, = reduced_uniqs.shape
+                reduced_maxv_bits = int(reduced_uniqs[-1]).bit_length()
+                if (reduced_uniq * 2 <= uniq and reduced_uniq < best_uniq) or \
+                        reduced_maxv_bits < best_bits:
+                    best_uniq = min(best_uniq, reduced_uniq)
+                    best_bits = min(best_bits, reduced_maxv_bits)
+
+                    if slope_num > 0:
+                        linear_key = f'linear{slope_num}'
+                    else:
+                        linear_key = f'linearM{-slope_num}'
+                    if slope_denom > 1:
+                        linear_key += f'X{slope_denom}'
 
                     expr = self._make_code(lo, reduced_values,
-                                           table_name + '_reduced',
+                                           f'{table_name}_{linear_key}',
                                            inexpr, inexpr_long,
                                            inexpr_base0,
                                            addition=offset+addition,
@@ -469,28 +485,7 @@ class MakeCodeForRange:
                                            skip_almost_linear_reduce=True,
                                            maxdepth=maxdepth-1)
 
-                    yield inexpr_base0 * slope + expr
-
-            div = self._check_almost_monotonic_increasing(values)
-            if div is not None:
-                for div in self._check_nearby_power_of_two(div):
-                    if div * 3 > num:
-                        continue
-                    reduced_values = values - \
-                            np.arange(num, dtype=np.int64) // div
-                    reduced_values_min = utils.np_min(reduced_values)
-                    reduced_values -= reduced_values_min
-                    reduced_values = reduced_values.astype(np.uint32)
-
-                    expr = self._make_code(lo, reduced_values,
-                                           table_name + '_div',
-                                           inexpr, inexpr_long,
-                                           inexpr_base0,
-                                           addition=addition+reduced_values_min,
-                                           skip_almost_linear_reduce=True,
-                                           maxdepth=maxdepth-1)
-
-                    yield inexpr_base0 // div + expr
+                    yield inexpr_base0 * slope_num // slope_denom + expr
 
         # Consecutive values are similar
         if not skip_stride and maxdepth > 0:
@@ -688,32 +683,41 @@ class MakeCodeForRange:
             expr = expr + addition
         yield expr
 
-    def _check_almost_monotonic_increasing(self, values):
-        num = values.size
+    def _yield_possible_slopes(self, values):
+        '''Is values almost linear?
+        Yield likely slopes (numerator, denominator)
+        '''
+        num, = values.shape
 
-        if num < self._opt.linear_threshold or num < 3:
-            return
+        # Most common adjacent differences.
+        # The remainer array will have many equal values
+        slope, slope_count = utils.most_common_element_count(
+                    utils.slope_array(values, np.int64))
+        if slope and slope_count * 3 >= num:
+            yield slope, 1
 
-        monotonic_count = np.count_nonzero(values[1:] >= values[:-1])
-        if monotonic_count < num * 7 // 8:
-            return
+        # Linear regression
+        res = linregress(np.arange(num, dtype=np.float32),
+                         values.astype(np.float32))
+        slope_frac = Fraction(res.slope)
 
-        ran = utils.np_max(values[-(num+15)//16:]) -\
-              utils.np_min(values[:(num+15)//16])
-        if not 0 < ran < num // 2:
-            return
+        last_denominator = 0
 
-        div = (num - 1) // ran
+        def try_slope(slope):
+            nonlocal last_denominator
+            numerator = slope.numerator
+            denominator = slope.denominator
+            if numerator > 0 and denominator > last_denominator and \
+                    -0x80000000 <= numerator * (num - 1) <= 0x7fffffff:
+                last_denominator = denominator
+                yield numerator, denominator
 
-        return div
-
-    def _check_nearby_power_of_two(self, v):
-        yield v
-        if v >= 3:
-            if utils.is_pow2(v + 1):
-                yield v + 1
-            if utils.is_pow2(v - 1):
-                yield v - 1
+        for i in range(17):
+            max_denominator = 1 << i
+            slope = slope_frac.limit_denominator(max_denominator)
+            yield from try_slope(slope)
+            yield from try_slope(Fraction(int(slope * max_denominator),
+                                          max_denominator))
 
     def _overhead(self, expr, *, id=id):
         """Estimate the overhead of an expression.
