@@ -112,6 +112,13 @@ class Expr(metaclass=ExprMeta):
     def __str__(self):
         raise NotImplementedError
 
+    def __format__(self, spec):
+        '''
+        specs:
+        U: Can safely rely on implicit type promotion
+        '''
+        return self.__str__()
+
     def statics(self, vs):
         return ''.join(filter(None, (x.statics(vs) for x in self.children)))
 
@@ -326,15 +333,26 @@ class ExprConst(Expr):
                 self._pool[value] = res = self
         return self
 
+    def __str(self, omit_type=False):
+        value = self.value
+        if (rtype := self.rtype) % 8 == 0:
+            value &= type_max(rtype)
+        if -16 <= value <= 16:
+            value_s = str(value)
+        else:
+            value_s = hex(value)
+        if not omit_type:
+            if self.rtype < 64:
+                value_s += 'u'
+            else:
+                value_s = f'UINT64_C({value_s})'
+        return value_s
+
     def __str__(self):
-        if -16 <= self.value <= 16:
-            value_s = str(self.value)
-        else:
-            value_s = hex(self.value)
-        if self.rtype < 64:
-            return value_s + 'u'
-        else:
-            return f'UINT64_C({value_s})'
+        return self.__str()
+
+    def __format__(self, spec):
+        return self.__str(omit_type='U' in spec)
 
     @staticmethod
     def combine(const_exprs):
@@ -367,12 +385,21 @@ class ExprAdd(Expr):
 
     def __str__(self):
         res = ' + '.join(map(str, self.exprs))
-        if self.const:
-            const_value = self.const.value
+        if (const := self.const):
+            left_rtype = max(expr.rtype for expr in self.exprs)
+            const_value = const.value
+            const_rtype = const.rtype
             if const_value >= 0:
-                res += ' + ' + str(self.const)
+                if left_rtype >= const_rtype:
+                    res += f' + {const:U}'
+                else:
+                    res += f' + {const}'
             else:
-                res += ' - ' + str(Const(self.const.rtype, -const_value))
+                abs_const = Const(const_rtype, -const_value)
+                if left_rtype >= 31 and left_rtype >= const_rtype:
+                    res += f' - {abs_const:U}'
+                else:
+                    res += f' - {abs_const}'
         return '(' + res + ')'
 
     @property
@@ -468,9 +495,10 @@ class ExprLShift(ExprShift):
         # Avoid the spurious 'u' after the constant
         right = self.right
         if right.IS_CONST:
-            if right.value in (1, 2, 3):
-                return '{} * {}'.format(self.left, 1 << right.value)
-            return '({} << {})'.format(self.left, right.value)
+            right_value = right.value
+            if right_value in (1, 2, 3):
+                return '{} * {}'.format(self.left, 1 << right_value)
+            return '({} << {})'.format(self.left, right_value)
         else:
             return '({} << {})'.format(self.left, right)
 
@@ -563,10 +591,10 @@ class ExprRShift(ExprShift):
         '''
         >>> expr = (Add(FixedVar(32, 'c'), 30) >> 2)
         >>> str(expr.optimized)
-        '(((c + 2u) >> 2) + 7u)'
+        '(((c + 2) >> 2) + 7)'
         >>> expr = (Add(FixedVar(32, 'c'), FixedVar(32, 'd'), -30) >> 2)
         >>> str(expr.optimized)
-        '(((c + d + 2u) >> 2) - 8u)'
+        '(((c + d + 2) >> 2) - 8)'
         '''
         left = self.left
         right = self.right
@@ -606,7 +634,12 @@ class ExprRShift(ExprShift):
 
 class ExprMul(ExprBinary):
     def __str__(self):
-        return '({} * {})'.format(self.left, self.right)
+        left = self.left
+        right = self.right
+        if left.rtype >= right.rtype:
+            return f'({left} * {right:U})'
+        else:
+            return f'({left} * {right})'
 
     @utils.cached_property
     def optimized(self):
@@ -665,7 +698,12 @@ class ExprDiv(ExprBinary):
         super().__init__(left, right)
 
     def __str__(self):
-        return '({} / {})'.format(self.left, self.right)
+        left = self.left
+        right = self.right
+        if left.rtype >= right.rtype:
+            return f'({left} / {right:U})'
+        else:
+            return f'({left} / {right})'
 
     @utils.cached_property
     def optimized(self):
@@ -688,7 +726,12 @@ class ExprMod(ExprBinary):
     IS_ALSO = 'DIV_MOD',
 
     def __str__(self):
-        return '({} % {})'.format(self.left, self.right)
+        left = self.left
+        right = self.right
+        if left.rtype >= right.rtype:
+            return f'({left} % {right:U})'
+        else:
+            return f'({left} % {right})'
 
     @utils.cached_property
     def optimized(self):
@@ -703,7 +746,12 @@ class ExprMod(ExprBinary):
 
 class ExprAnd(ExprBinary):
     def __str__(self):
-        return '({} & {})'.format(self.left, self.right)
+        left = self.left
+        right = self.right
+        if left.rtype >= right.rtype:
+            return f'({left} & {right:U})'
+        else:
+            return f'({left} & {right})'
 
     @utils.cached_property
     def optimized(self):
@@ -776,7 +824,7 @@ class ExprCompare(ExprBinary):
         self.compare = compare
 
     def __str__(self):
-        return '({} {} {})'.format(self.left, self.compare, self.right)
+        return f'({self.left:U} {self.compare} {self.right:U})'
 
     @utils.cached_property
     def negated(self):
@@ -920,16 +968,15 @@ class ExprCond(Expr):
                 return ExprCond(cond.left, exprF, exprT).optimized
 
         # Sometimes we might want to negate thecomparator
-        # (Cannot merge this if with the previous one -- cond may have changed)
         if cond.IS_COMPARE:
             # (1) If both exprT and exprF are constants, swap smaller ones
             #     to right to increase readability.
-            # (2) If one of exprT is constant and the other is ExprCond, swap
+            # (2) If one of exprT is constant and the other is not, swap
             #     the constant to left to increase readability.
             if (
                     (exprT.IS_CONST and exprF.IS_CONST and
                      exprT.value < exprF.value) or
-                    (exprF.IS_CONST and exprT.IS_COND)):
+                    (exprF.IS_CONST and not exprT.IS_CONST)):
                 return ExprCond(cond.negated, exprF, exprT).optimized
 
         return self

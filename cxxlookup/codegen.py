@@ -42,10 +42,6 @@ from . import utils
 
 COMMON_HEADERS = r'''#include <inttypes.h>
 #include <stdint.h>
-
-#ifndef UINT64_C
-# define UINT64_C(x) uint64_t(x##ULL)
-#endif
 '''
 
 
@@ -77,9 +73,7 @@ def make_code(func_name, base, values, hole, opt):
     res.append('}}  // namespace\n'
                '\n'
                'uint32_t {}(uint32_t c) noexcept {{\n'
-               '  uint64_t cl = c;\n'
-               '  static_cast<void>(cl);'
-               '  // Suppress warning if cl is never used\n'
+               '  [[maybe_unused]] uint64_t cl = c;\n'
                '  switch (c) {{\n'.format(func_name))
     for lo, (hi, code) in sorted(codes.items()):
         if rcode[code][0][0] != lo:  # Printed at other case's
@@ -148,7 +142,12 @@ def _format_code(expr, subexprs):
             var_expr = subexprs[var]
             rename_var(var_expr)
             var_type = var_expr.rtype
-            while var_expr.IS_CAST and var_expr.rtype >= var_type:
+            # The outermost explicit cast can absolutely be trimmed
+            # beucase the variable has an explicit type.
+            if var_expr.IS_CAST:
+                var_expr = var_expr.value
+            # Inner upcasts can also be trimmed
+            while var_expr.IS_CAST and var_expr.value.rtype <= var_expr.rtype:
                 var_expr = var_expr.value
 
             code_str.append('      {} {} = {};\n'.format(
@@ -219,8 +218,9 @@ class MakeCodeForRange:
         # as variables for code readability
         expr.extract_subexprs(5, make_subexpr, True)
 
-        # Final optimization: Remove unnecessary explicit cast
-        while expr.IS_CAST and expr.rtype >= 31:
+        # Final optimization: Remove unnecessary explicit upcast
+        while expr.IS_CAST and \
+                (expr.rtype >= 31 or expr.rtype >= expr.value.rtype):
             expr = expr.value
 
         return expr, subexprs

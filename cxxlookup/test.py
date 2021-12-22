@@ -47,19 +47,20 @@ CODE_TEMPLATE = Template(r'''$headers
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <memory>
+
 namespace {
 
 $code
 
 } // namespace
 
-int main(void) {
-    uint32_t *out = new uint32_t[$hi - $lo];
-    for (uint32_t i = $lo; i < $hi; ++i)
-        out[i - $lo] = $func_name(i);
-    fwrite(out, sizeof(uint32_t), $hi - $lo, stdout);
-    delete[] out;
-    return 0;
+int main() {
+  auto out = std::make_unique_for_overwrite<uint32_t[]>($hi - $lo);
+  for (uint32_t i = $lo; i < $hi; ++i)
+    out[i - $lo] = $func_name(i);
+  fwrite(out.get(), sizeof(uint32_t), $hi - $lo, stdout);
+  return 0;
 }
 ''')
 
@@ -104,7 +105,7 @@ def _run_test(func_name, base, values, hole, headers, code,
     with open(os.path.join(cwd, src_name), 'w') as f:
         f.write(src)
 
-    rc = subprocess.call(['g++', '-O2', '-std=gnu++11', '-s',
+    rc = subprocess.call(['g++', '-O2', '-march=native', '-std=gnu++20', '-s',
                           '-o', exe_name, src_name],
                          cwd=cwd)
     if rc != 0:
