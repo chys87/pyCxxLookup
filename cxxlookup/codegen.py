@@ -471,18 +471,22 @@ class MakeCodeForRange:
 
                     yield inexpr_base0 * slope + expr
 
-            div = self._check_monotonic_increasing(values)
+            div = self._check_almost_monotonic_increasing(values)
             if div is not None:
                 for div in self._check_nearby_power_of_two(div):
                     if div * 3 > num:
                         continue
                     reduced_values = values - \
-                            np.arange(num, dtype=np.uint32) // div
+                            np.arange(num, dtype=np.int64) // div
+                    reduced_values_min = utils.np_min(reduced_values)
+                    reduced_values -= reduced_values_min
+                    reduced_values = reduced_values.astype(np.uint32)
+
                     expr = self._make_code(lo, reduced_values,
                                            table_name + '_div',
                                            inexpr, inexpr_long,
                                            inexpr_base0,
-                                           addition=addition,
+                                           addition=addition+reduced_values_min,
                                            skip_almost_linear_reduce=True,
                                            maxdepth=maxdepth-1)
 
@@ -684,16 +688,19 @@ class MakeCodeForRange:
             expr = expr + addition
         yield expr
 
-    def _check_monotonic_increasing(self, values):
+    def _check_almost_monotonic_increasing(self, values):
         num = values.size
 
-        if num < self._opt.linear_threshold:
-            return
-        if not utils.is_monotonically_increasing(values):
+        if num < self._opt.linear_threshold or num < 3:
             return
 
-        ran = int(values[-1] - values[0])
-        if 2 * ran >= num:
+        monotonic_count = np.count_nonzero(values[1:] >= values[:-1])
+        if monotonic_count < num * 7 // 8:
+            return
+
+        ran = utils.np_max(values[-(num+15)//16:]) -\
+              utils.np_min(values[:(num+15)//16])
+        if not 0 < ran < num // 2:
             return
 
         div = (num - 1) // ran
