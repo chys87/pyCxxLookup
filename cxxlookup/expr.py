@@ -120,6 +120,16 @@ class Expr(metaclass=ExprMeta):
 
     @property
     def optimized(self):
+        '''Optimize the expression
+
+        The property should never modify self, but instead return new optimized
+        instances if any optimization is applicable.
+        '''
+        return self
+
+    @property
+    def force_optimized(self):
+        self.__dict__['optimized'] = self
         return self
 
     def walk(self):
@@ -228,6 +238,7 @@ class Expr(metaclass=ExprMeta):
 
 class ExprVar(Expr):
     def __init__(self, type):
+        super().__init__()
         self.rtype = type
 
 
@@ -287,6 +298,7 @@ class ExprConst(Expr):
     _pool = [None] * _POOL_SIZE
 
     def __init__(self, type, value, *, pooled=False, int=int):
+        super().__init__()
         self.rtype = type
         self.value = int(value)
         self.pooled = pooled
@@ -340,6 +352,7 @@ class ExprConst(Expr):
 
 class ExprAdd(Expr):
     def __init__(self, exprs, const, *, max=max, tuple=tuple):
+        super().__init__()
         assert const is None or const.IS_CONST
         self.exprs = tuple(expr.optimized for expr in exprs)
         self.const = const
@@ -401,13 +414,13 @@ class ExprAdd(Expr):
                     const = None
                     break
 
-        self.exprs = exprs = tuple(exprs)
-        self.const = const
-
         if len(exprs) == 1 and not const:
             return exprs[0]
 
-        return self
+        if exprs == self.exprs and const == self.const:
+            return self
+        else:
+            return ExprAdd(exprs, const).force_optimized
 
     def extract_subexprs(self, threshold, callback, allow_extract_table):
         exprs = []
@@ -422,6 +435,7 @@ class ExprAdd(Expr):
 
 class ExprBinary(Expr):
     def __init__(self, left, right, rtype=None, *, max=max):
+        super().__init__()
         self.left = left = left.optimized
         self.right = right = right.optimized
         self.rtype = rtype or max(31, left.rtype, right.rtype)
@@ -577,8 +591,9 @@ class ExprRShift(ExprShift):
         if right_const and \
                 left.IS_RSHIFT and \
                 left.right.IS_CONST:
-            self.right = right = Add(right, left.right).optimized
-            self.left = left = left.left
+            right = Add(right, left.right).optimized
+            left = left.left
+            return ExprRShift(left, right).optimized
 
         return self
 
@@ -600,8 +615,7 @@ class ExprMul(ExprBinary):
 
         # Put constant on the right side
         if not right_const and left.IS_CONST:
-            self.left, self.right = left, right = right, left
-            right_const = True
+            return ExprMul(right, left).optimized
 
         if right_const:
             # Strength reduction (* => <<)
@@ -709,7 +723,7 @@ class ExprAnd(ExprBinary):
                 c1p |= ~((1 << bt) - 1)
             if c1p != c1:
                 left = ExprAdd(left.exprs, Const(left.const.rtype, c1p))
-                self.left = left = left.optimized
+                return ExprAnd(left, right).optimized
 
         # (a & c1) & c2 ==> a & (c1 & c2)
         if right_const and \
@@ -804,6 +818,7 @@ class ExprCompare(ExprBinary):
 
 class ExprCast(Expr):
     def __init__(self, type, value):
+        super().__init__()
         self.rtype = type
         self.value = value.optimized
 
@@ -840,6 +855,7 @@ class ExprCast(Expr):
 
 class ExprCond(Expr):
     def __init__(self, cond, exprT, exprF):
+        super().__init__()
         self.cond = cond.optimized
         self.exprT = exprT.optimized
         self.exprF = exprF.optimized
@@ -881,7 +897,9 @@ class ExprCond(Expr):
                 (cond.value.IS_COMPARE or
                  (cond.value.IS_AND and cond.value.right.IS_CONST and
                   cond.value.right.value == 1)):
-            self.cond = cond = cond.value
+             cond = cond.value
+        if cond is not self.cond:
+            return ExprCond(cond, exprT, exprF).optimized
 
         # cond ? 1 : 0 ==> Cast(cond)
         if (cond.IS_COMPARE and exprT.IS_CONST and exprF.IS_CONST and
@@ -915,6 +933,7 @@ class ExprTable(Expr):
     has_table = True
 
     def __init__(self, type, name, values, var, offset):
+        super().__init__()
         self.rtype = type
         self.name = name
         self.values = values
@@ -983,14 +1002,21 @@ class ExprTable(Expr):
 
     @utils.cached_property
     def optimized(self):
-        var = self.var.optimized
+        var = self.var
         # If var contains a cast, it's usually unnecessary
         while var.IS_CAST and var.value.rtype < var.rtype:
-            self.var = var = var.value.optimized
+            var = var.value.optimized
+        if var is not self.var:
+            return ExprTable(self.rtype, self.name, self.values, var,
+                             self.offset).optimized
+
         # Absorb constants into offset
         if var.IS_ADD and var.const:
-            self.offset -= var.const.value
-            self.var = var = ExprAdd(var.exprs, None).optimized
+            offset = self.offset - var.const.value
+            var = ExprAdd(var.exprs, None).optimized
+            return ExprTable(self.rtype, self.name, self.values, var,
+                             offset).optimized
+
         return self
 
     def table_bytes(self, *, type_bytes=type_bytes):
