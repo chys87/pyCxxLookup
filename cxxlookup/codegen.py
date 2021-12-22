@@ -173,12 +173,14 @@ class MakeCodeForRange:
         self._table_name = table_name
         self._opt = opt
 
+    __var_c = FixedVar(32, 'c')
+    __var_cl = FixedVar(64, 'cl')
+
     @utils.cached_property
     def expr_tuple(self):
         expr = self._make_code(
             self._lo, self.values, self._table_name,
-            FixedVar(32, 'c'), FixedVar(64, 'cl'),
-            maxdepth=6)
+            self.__var_c, self.__var_cl, maxdepth=6)
 
         # Remember how many times each expression is visited
         # Expressions appearing more than once are always extracted

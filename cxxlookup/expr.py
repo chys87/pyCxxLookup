@@ -241,6 +241,9 @@ class ExprVar(Expr):
         super().__init__()
         self.rtype = type
 
+    def _complicated(self, threshold):
+        return False
+
 
 class ExprFixedVar(ExprVar):
     def __init__(self, type, name):
@@ -348,6 +351,9 @@ class ExprConst(Expr):
 
     def __neg__(self):
         return Const(self.rtype, -self.value)
+
+    def _complicated(self, threshold):
+        return False
 
 
 class ExprAdd(Expr):
