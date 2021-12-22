@@ -63,7 +63,9 @@ class VectorView {
   bool more() const { return remaining_; }
   explicit operator bool() const { return more(); }
 
-  T peek() const { return *ptr_; }
+  T operator[](size_t k) const {
+    return *reinterpret_cast<const T*>(intptr_t(ptr_) + stride_ * k);
+  }
 
   T next() {
     T v = *ptr_;
@@ -72,6 +74,10 @@ class VectorView {
     --remaining_;
     return v;
   }
+
+  const T* data() const { return ptr_; }
+  ptrdiff_t stride() const { return stride_; }
+  unsigned size() const { return remaining_; }
 
  private:
   const T* ptr_;
@@ -488,19 +494,17 @@ PyObject* array_equal(PyObject* self, PyObject* args) {
   return PyBool_FromLong(r);
 }
 
-template <typename T>
-[[gnu::always_inline]] inline bool array_range_equal(PyArrayObject* array,
-                                                     size_t a, size_t b,
-                                                     size_t n) {
-  uintptr_t data = uintptr_t(PyArray_DATA(array));
-  ptrdiff_t stride = PyArray_STRIDES(array)[0];
-
-  const T* p = reinterpret_cast<const T*>(data + a * stride);
-  const T* q = reinterpret_cast<const T*>(data + b * stride);
+[[gnu::always_inline]] inline bool array_range_equal(
+    const VectorView<uint32_t>& array, size_t a, size_t b, size_t n) {
+  auto stride = array.stride();
+  const uint32_t* p =
+      reinterpret_cast<const uint32_t*>(intptr_t(array.data()) + a * stride);
+  const uint32_t* q =
+      reinterpret_cast<const uint32_t*>(intptr_t(array.data()) + b * stride);
 
   if (stride == sizeof(uint32_t)) {
     // This is the common case
-#ifdef __SSE__
+#ifdef __SSE4_1__
     if (n >= 4) {
       __m128i X = _mm_loadu_si128((const __m128i*)p) ^
                   _mm_loadu_si128((const __m128i*)q);
@@ -514,8 +518,8 @@ template <typename T>
   } else {
     for (; n; --n) {
       if (*p != *q) return false;
-      p = reinterpret_cast<const T*>(uintptr_t(p) + stride);
-      q = reinterpret_cast<const T*>(uintptr_t(q) + stride);
+      p = reinterpret_cast<const uint32_t*>(uintptr_t(p) + stride);
+      q = reinterpret_cast<const uint32_t*>(uintptr_t(q) + stride);
     }
     return true;
   }
@@ -543,9 +547,10 @@ PyObject* array_cycle(PyObject* self, PyObject* args) {
       (n <= kStackAlloc) ? indices_stack_alloc : indices_new.get();
   uint32_t ind_n = 0;
 
+  VectorView<uint32_t> array_view(array);
   {
-    VectorView<uint32_t> view(array);
-    uint32_t first = view.peek();
+    VectorView<uint32_t> view(array_view);
+    uint32_t first = view[0];
     uint32_t i = 0;
     while (view) {
       if (view.next() == first) indices[ind_n++] = i;
@@ -575,7 +580,7 @@ PyObject* array_cycle(PyObject* self, PyObject* args) {
     // Compare array slices
     bool ok = true;
     for (uint32_t j = k; j < n; j += k) {
-      if (!array_range_equal<uint32_t>(array, 0, j, std::min(n - j, k))) {
+      if (!array_range_equal(array_view, 0, j, std::min(n - j, k))) {
         ok = false;
         break;
       }
