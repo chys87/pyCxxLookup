@@ -595,7 +595,15 @@ class MakeCodeForRange:
                                        inexpr, inexpr_long, inexpr_base0,
                                        skip_gcd_reduce=True,
                                        maxdepth=maxdepth-1)
-                yield expr * gcd + (addition + offset)
+                expr = expr * gcd
+                if addition + offset:
+                    expr = expr + (addition + offset)
+                yield expr
+
+                # If the divided values are significantly smaller, we
+                # likely dont' need to retry the origianl values
+                if const_type(maxv // gcd) != const_type(maxv):
+                    return
 
         # Try splitting the data into low and high parts
         if maxdepth > 0:
