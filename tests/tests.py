@@ -33,6 +33,7 @@
 
 import argparse
 import doctest
+import math
 import os
 import random
 import subprocess
@@ -149,6 +150,17 @@ def _():
     return values
 
 
+@Testing('east_asian_width')
+def _():
+    values = [0] * 0x110000
+    for i in range(len(values)):
+        res = 0
+        for wc in unicodedata.east_asian_width(chr(i)):
+            res = res * 256 + ord(wc)
+        values[i] = res
+    return values
+
+
 @Testing('misc1')
 def _():
     random.seed(0)
@@ -228,7 +240,16 @@ def _():
 @Testing('square')
 def _():
     N = 0x800000
-    values = [i * i & 0x3f for i in range(N)]
+    values = [i * i & 0x7f for i in range(N)]
+    return values
+
+
+@Testing('sine')
+def _():
+    N = 10 * 10000
+    S = 2 ** 30
+    values = [int(math.sin(math.radians(i % (360 * 60) / 60)) * S + S)
+              for i in range(N)]
     return values
 
 
@@ -237,6 +258,24 @@ def _():
     random.seed(0)
     values = [random.randrange(256) for _ in range(54)] * 25
     return values
+
+
+@Testing('toutf8')
+def _():
+    N = 0x110000
+    values = [0] * N
+    for k in range(N):
+        unic = chr(k)
+        try:
+            ub = unic.encode('utf-8')
+        except UnicodeEncodeError:
+            ub = b''
+        uv = 0
+        for c in ub:
+            uv = uv * 256 + c
+        values[k] = uv
+
+    return {'values': values, 'opt': cxxlookup.OPT_Os}
 
 
 @Testing('togb18030')
