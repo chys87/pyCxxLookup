@@ -57,7 +57,6 @@ def make_code(func_name, base, values, hole, opt):
 
     # Do it in parallel.  Many NumPy/SciPy/_speedups methods release GIL
     with ThreadPool() as pool:
-        @utils.thread_profiling
         def gen_group(pair):
             lo, values = pair
             range_name = f'{func_name}_{lo:x}_{lo+values.size:x}'
@@ -71,7 +70,7 @@ def make_code(func_name, base, values, hole, opt):
 
         # Submit big groups before small ones, so that we likely get
         # better parallelism
-        pool.map(gen_group,
+        utils.thread_pool_map(pool, gen_group,
                  sorted(groups.items(), key=lambda x: x[1].size, reverse=True))
 
     res = []
@@ -471,6 +470,8 @@ class MakeCodeForRange:
             slopes = sorted(set(self._yield_possible_slopes(values)),
                             key=lambda x: x[1])
 
+            linear_tasks = []
+
             for slope_num, slope_denom in slopes:
                 reduced_values = values - \
                     np.arange(0, slope_num * num, slope_num, dtype=np.int64) \
@@ -488,23 +489,31 @@ class MakeCodeForRange:
                     best_uniq = min(best_uniq, reduced_uniq)
                     best_bits = min(best_bits, reduced_maxv_bits)
 
-                    if slope_num > 0:
-                        linear_key = f'linear{slope_num}'
-                    else:
-                        linear_key = f'linearM{-slope_num}'
-                    if slope_denom > 1:
-                        linear_key += f'X{slope_denom}'
+                    linear_tasks.append((reduced_values, reduced_uniqs, offset,
+                                         slope_num, slope_denom))
 
-                    expr = self._make_code(lo, reduced_values,
-                                           f'{table_name}_{linear_key}',
-                                           inexpr, inexpr_long,
-                                           inexpr_base0,
-                                           addition=offset+addition,
-                                           uniqs=reduced_uniqs,
-                                           skip_almost_linear_reduce=True,
-                                           maxdepth=maxdepth-1)
+            def gen_linear(args):
+                reduced_values, reduced_uniqs, offset, slope_num, slope_denom\
+                    = args
+                if slope_num > 0:
+                    linear_key = f'linear{slope_num}'
+                else:
+                    linear_key = f'linearM{-slope_num}'
+                if slope_denom > 1:
+                    linear_key += f'X{slope_denom}'
+                expr = self._make_code(lo, reduced_values,
+                                       f'{table_name}_{linear_key}',
+                                       inexpr, inexpr_long,
+                                       inexpr_base0,
+                                       addition=offset+addition,
+                                       uniqs=reduced_uniqs,
+                                       skip_almost_linear_reduce=True,
+                                       maxdepth=maxdepth-1)
 
-                    yield inexpr_base0 * slope_num // slope_denom + expr
+                return inexpr_base0 * slope_num // slope_denom + expr
+
+            yield from utils.thread_pool_map(
+                self._thread_pool, gen_linear, linear_tasks)
 
         # Consecutive values are similar
         if not skip_stride and maxdepth > 0:

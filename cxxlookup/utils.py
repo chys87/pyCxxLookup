@@ -34,6 +34,7 @@
 import functools
 import os
 import sys
+import time
 
 import numpy as np
 
@@ -453,7 +454,10 @@ def thread_profiling(func):
 
         from cProfile import Profile
 
-        pr = Profile()
+        try:
+            pr = __thread_profiles.pop()
+        except IndexError:
+            pr = Profile()
         pr.enable()
         try:
             return func(*args, **kwargs)
@@ -479,3 +483,61 @@ class cached_property:
         func = self.func
         res = obj.__dict__[func.__name__] = func(obj)
         return res
+
+
+class __ThreadPoolTask:
+    empty = object()
+
+    def __init__(self, f, arglist):
+        self._f = f
+        self._pending = list(enumerate(arglist))
+        self._pending.reverse()
+        self.results = [self.empty] * len(arglist)
+
+    @thread_profiling
+    def run_in_thread(self, _):
+        return self.run()
+
+    def run(self):
+        while True:
+            try:
+                i, arg = self._pending.pop()
+            except IndexError:
+                return
+            self.results[i] = self._f(arg)
+
+
+def thread_pool_map(thread_pool, f, arglist):
+    '''This function is like ThreadPool.map, but it can be safely called
+    from a thread which is itself in the pool, without the possibility
+    of deadlocking.
+    This function also takes care of profiling already.
+    '''
+    n = len(arglist)
+    if n == 0:
+        return []
+    if n == 1:
+        return [f(arglist[0])]
+    task = __ThreadPoolTask(f, arglist)
+
+    async_list = [thread_pool.apply_async(task.run_in_thread)
+                  for _ in range(min(os.cpu_count(), n) - 1)]
+    task.run()
+
+    # Because task.run() has completed, we're certain that the pending
+    # list is empty, but possibly not all results have been filled in.
+    # We periodically ping all async results so that exceptions are propagated.
+
+    # Don't use task.empty in task.results here -- __eq__ may be overriden
+    while any(res is task.empty for res in task.results):
+        for i in range(len(async_list) - 1, -1, -1):
+            async_obj = async_list[i]
+            if async_obj.ready():
+                async_obj.get()
+                del async_list[i]
+        time.sleep(0.01)
+
+    # Now all results are successful.  Now we don't really have to wait for
+    # the async results.  We're certain they have thrown no exception, and
+    # they are actually not necessarily ready.
+    return task.results
