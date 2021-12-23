@@ -463,7 +463,8 @@ class MakeCodeForRange:
             return
 
         # Most elements are almost linear, but a few outliers exist.
-        if not skip_almost_linear_reduce and maxdepth > 0 and num >= 3:
+        if not skip_almost_linear_reduce and maxdepth > 0 and num >= 3 and \
+                maxv >= 4:
             best_uniq = uniq
             best_bits = maxv_bits
 
