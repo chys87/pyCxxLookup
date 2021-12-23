@@ -394,36 +394,42 @@ def np_cycle(array, *, max_cycle=None,
     return 0
 
 
+__thread_profiles = []
+
+
+def __profiling_enabled():
+    # We hope it can be set or unset at run-time, so put the check here
+    return bool(os.environ.get('pyCxxLookup_Profiling'))
+
+
 def profiling(func):
     @functools.wraps(func)
     def _func(*args, **kwargs):
-        # We hope it can be set or unset at run-time, so put the check here
-        profiling_setting = os.environ.get('pyCxxLookup_Profiling')
-        if not profiling_setting:
+        if not __profiling_enabled():
             return func(*args, **kwargs)
 
-        try:
-            import cProfile as profile
-        except ImportError:
-            import profile
-        import pstats
+        __thread_profiles.clear()
 
-        pr = profile.Profile()
+        from cProfile import Profile
+        import pstats
+        import time
+
+        wall_clock = time.time()
+
+        pr = Profile()
         pr.enable()
         try:
             return func(*args, **kwargs)
 
         finally:
             pr.disable()
+            wall_time = time.time() - wall_clock
+            print(f'Wall time: {wall_time:.3f} seconds')
 
-            try:
-                stat_count = int(profiling_setting)
-            except ValueError:
-                stat_count = 0
-            if stat_count < 10:
-                stat_count = 30
+            ps = pstats.Stats(pr, *__thread_profiles, stream=sys.stderr)
+            __thread_profiles.clear()
 
-            ps = pstats.Stats(pr, stream=sys.stderr)
+            stat_count = 30
             ps.sort_stats('cumulative', 'stdname')
             ps.print_stats(stat_count)
 
@@ -432,6 +438,29 @@ def profiling(func):
 
             if os.environ.get('pyCxxLookup_Profiling_Callers'):
                 ps.print_callers()
+
+    return _func
+
+
+def thread_profiling(func):
+    '''This decorator should be applied to functions run in separate threads,
+    so that the results are collected to the main thread
+    '''
+    @functools.wraps(func)
+    def _func(*args, **kwargs):
+        if not __profiling_enabled():
+            return func(*args, **kwargs)
+
+        from cProfile import Profile
+
+        pr = Profile()
+        pr.enable()
+        try:
+            return func(*args, **kwargs)
+
+        finally:
+            pr.disable()
+            __thread_profiles.append(pr)
 
     return _func
 

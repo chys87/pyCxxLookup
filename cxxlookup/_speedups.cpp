@@ -50,6 +50,30 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace {
 
+constexpr size_t kReleaseGILThreshold = 1024;
+
+class ReleaseGIL {
+ public:
+  ReleaseGIL() { Py_UNBLOCK_THREADS; }
+  explicit ReleaseGIL(size_t size) {
+    if (size >= kReleaseGILThreshold) {
+      Py_UNBLOCK_THREADS;
+    }
+  }
+
+  ReleaseGIL(const ReleaseGIL&) = delete;
+  ReleaseGIL& operator=(const ReleaseGIL&) = delete;
+
+  ~ReleaseGIL() {
+    if (_save) {
+      Py_BLOCK_THREADS;
+    }
+  }
+
+ private:
+  PyThreadState* _save = nullptr;
+};
+
 template <typename T>
 class VectorView {
  public:
@@ -159,25 +183,29 @@ PyObject* do_unique(PyArrayObject* array) {
 
   T* out = static_cast<T*>(PyArray_DATA(out_obj));
   T* po = out;
+  size_t out_size;
   {
-    // Let's try to eliminate some (but not all) duplicates with
-    // some simple tricks
-    constexpr uint32_t HASHTABLE_SIZE = 61;
-    T hashtable[HASHTABLE_SIZE] = {1, 0};
-
     VectorView<T> view(array);
-    while (view) {
-      T v = view.next();
-      size_t h = UT(v) % HASHTABLE_SIZE;
-      if (hashtable[h] != v) {
-        hashtable[h] = v;
-        *po++ = v;
+    ReleaseGIL release_gil(view.size());
+    {
+      // Let's try to eliminate some (but not all) duplicates with
+      // some simple tricks
+      constexpr uint32_t HASHTABLE_SIZE = 61;
+      T hashtable[HASHTABLE_SIZE] = {1, 0};
+
+      while (view) {
+        T v = view.next();
+        size_t h = UT(v) % HASHTABLE_SIZE;
+        if (hashtable[h] != v) {
+          hashtable[h] = v;
+          *po++ = v;
+        }
       }
     }
-  }
 
-  std::sort(out, po);
-  size_t out_size = std::unique(out, po) - out;
+    std::sort(out, po);
+    out_size = std::unique(out, po) - out;
+  }
 
   if (out_size != n) {
     dims[0] = out_size;
@@ -256,10 +284,13 @@ PyObject* gcd_many(PyObject* self, PyObject* args) {
 
   int type = PyArray_TYPE(array);
 
-  if (type == NPY_UINT32)
-    return PyLong_FromLong(do_gcd_many(VectorView<uint32_t>(array)));
-  else
+  if (type == NPY_UINT32) {
+    VectorView<uint32_t> view(array);
+    auto res = (ReleaseGIL(view.size()), do_gcd_many(view));
+    return PyLong_FromLong(res);
+  } else {
     Py_RETURN_NONE;
+  }
 }
 
 PyObject* unique(PyObject* self, PyObject* args) {
@@ -288,10 +319,12 @@ PyObject* mode_cnt(PyObject* self, PyObject* args) {
   int type = PyArray_TYPE(array);
 
   if (type == NPY_UINT32) {
-    auto res = do_mode_cnt(VectorView<uint32_t>(array));
+    VectorView<uint32_t> view(array);
+    auto res = (ReleaseGIL(view.size() * 3), do_mode_cnt(view));
     return Py_BuildValue("(In)", unsigned(res.first), Py_ssize_t(res.second));
   } else if (type == NPY_INT64) {
-    auto res = do_mode_cnt(VectorView<int64_t>(array));
+    VectorView<int64_t> view(array);
+    auto res = (ReleaseGIL(view.size() * 3), do_mode_cnt(view));
     return Py_BuildValue("(Ln)", static_cast<PY_LONG_LONG>(int64_t(res.first)),
                          Py_ssize_t(res.second));
   } else {
@@ -302,10 +335,16 @@ PyObject* mode_cnt(PyObject* self, PyObject* args) {
 template <int mode>
 PyObject* min_max_mode(PyArrayObject* array) {
   switch (PyArray_TYPE(array)) {
-    case NPY_UINT32:
-      return PyLong_FromLong(do_min_max<mode>(VectorView<uint32_t>(array)));
-    case NPY_INT64:
-      return PyLong_FromLongLong(do_min_max<mode>(VectorView<int64_t>(array)));
+    case NPY_UINT32: {
+      VectorView<uint32_t> view(array);
+      auto res = (ReleaseGIL(view.size()), do_min_max<mode>(view));
+      return PyLong_FromLong(res);
+    }
+    case NPY_INT64: {
+      VectorView<int64_t> view(array);
+      auto res = (ReleaseGIL(view.size()), do_min_max<mode>(view));
+      return PyLong_FromLongLong(res);
+    }
     default:
       Py_RETURN_NONE;
   }
@@ -537,57 +576,69 @@ PyObject* array_cycle(PyObject* self, PyObject* args) {
   uint32_t n = nn;
   if (nn < 2) return PyLong_FromLong(0);
   if (nn != n) Py_RETURN_NONE;
-
-  // Typical Linux stack size is 8 MiB
-  constexpr size_t kStackAlloc = 1024 * 1024 / sizeof(uint32_t);
-  uint32_t indices_stack_alloc[kStackAlloc];
-  std::unique_ptr<uint32_t[]> indices_new(n <= kStackAlloc ? nullptr
-                                                           : new uint32_t[n]);
-  uint32_t* indices =
-      (n <= kStackAlloc) ? indices_stack_alloc : indices_new.get();
-  uint32_t ind_n = 0;
-
   VectorView<uint32_t> array_view(array);
-  {
-    VectorView<uint32_t> view(array_view);
-    uint32_t first = view[0];
-    uint32_t i = 0;
-    while (view) {
-      if (view.next() == first) indices[ind_n++] = i;
-      ++i;
-    }
-  }
 
-  // Special case: constant array
-  if (ind_n == n) return PyLong_FromLong(1);
+  long res = 0;
 
-  for (uint32_t i = 1; i < ind_n; ++i) {
-    uint32_t k = indices[i];
-    if (k > max_cycle) break;
+  do {
+    ReleaseGIL release_gil(nn);
 
-    // Check whether indices are likely correct
+    // Typical Linux stack size is 8 MiB
+    constexpr size_t kStackAlloc = 1024 * 1024 / sizeof(uint32_t);
+    uint32_t indices_stack_alloc[kStackAlloc];
+    std::unique_ptr<uint32_t[]> indices_new(n <= kStackAlloc ? nullptr
+                                                             : new uint32_t[n]);
+    uint32_t* indices =
+        (n <= kStackAlloc) ? indices_stack_alloc : indices_new.get();
+    uint32_t ind_n = 0;
+
     {
+      VectorView<uint32_t> view(array_view);
+      uint32_t first = view[0];
+      uint32_t i = 0;
+      while (view) {
+        if (view.next() == first) indices[ind_n++] = i;
+        ++i;
+      }
+    }
+
+    // Special case: constant array
+    if (ind_n == n) {
+      res = 1;
+      break;
+    }
+
+    for (uint32_t i = 1; i < ind_n; ++i) {
+      uint32_t k = indices[i];
+      if (k > max_cycle) break;
+
+      // Check whether indices are likely correct
+      {
+        bool ok = true;
+        for (uint32_t j = i * 2; j < ind_n; j += i) {
+          if (indices[j] != indices[j - i] + k) {
+            ok = false;
+            break;
+          }
+        }
+        if (!ok) continue;
+      }
+
+      // Compare array slices
       bool ok = true;
-      for (uint32_t j = i * 2; j < ind_n; j += i) {
-        if (indices[j] != indices[j - i] + k) {
+      for (uint32_t j = k; j < n; j += k) {
+        if (!array_range_equal(array_view, 0, j, std::min(n - j, k))) {
           ok = false;
           break;
         }
       }
-      if (!ok) continue;
-    }
-
-    // Compare array slices
-    bool ok = true;
-    for (uint32_t j = k; j < n; j += k) {
-      if (!array_range_equal(array_view, 0, j, std::min(n - j, k))) {
-        ok = false;
+      if (ok) {
+        res = k;
         break;
       }
     }
-    if (ok) return PyLong_FromLong(k);
-  }
-  return PyLong_FromLong(0);
+  } while (false);
+  return PyLong_FromLong(res);
 }
 
 // min_by_chunk(array, chunk_size)
@@ -611,10 +662,11 @@ PyObject* min_by_chunk(PyObject* self, PyObject* args) {
   PyArrayObject* out_obj =
       reinterpret_cast<PyArrayObject*>(PyArray_Empty(1, dims, descr, 0));
   if (out_obj == nullptr) return nullptr;
-
   uint32_t* pw = static_cast<uint32_t*>(PyArray_DATA(out_obj));
+
   {
     VectorView<uint32_t> view(array);
+    ReleaseGIL release_gil(view.size());
     while (view) {
       uint32_t v = view.next();
       for (unsigned i = 1; i < chunk_size && view; ++i)
@@ -641,37 +693,46 @@ PyObject* format_c_array(PyObject* self, PyObject* args) {
   if (PyArray_TYPE(array) != NPY_UINT32) Py_RETURN_NONE;
 
   size_t n = PyArray_DIMS(array)[0];
-  unsigned n_len = hex_len(n);
-
-  uint32_t max = do_min_max<1>(VectorView<uint32_t>(array));
-  unsigned max_len = hex_len(max);
-
-  size_t mem_upper_bound =
-      (max_len + 4) * n + (n_len + 8) * (n / 8) + name_len + 128;
-  std::unique_ptr<char[]> buf(new char[mem_upper_bound]);
-  char* w = buf.get();
-
-  w += snprintf(w, mem_upper_bound,
-                "alignas(%sint%u_t) const %sint%u_t %.*s[%#zx] = {",
-                (type & 1) ? "" : "u", (type + 1) & ~1u, (type & 1) ? "" : "u",
-                (type + 1) & ~1u, int(name_len), name, n);
-
-  size_t i = 0;
   VectorView<uint32_t> view(array);
-  while (view) {
-    uint32_t v = view.next();
-    if (i % 8 == 0) {
-      w = copy_string(w, "\n  /* 0x");
-      w = write_hex(w, i, n_len - 2);
-      w = copy_string(w, " */");
+
+  std::unique_ptr<char[]> buf;
+  char* w;
+
+  VectorView<uint32_t> array_view(array);
+
+  {
+    ReleaseGIL release_gil(array_view.size());
+
+    unsigned n_len = hex_len(n);
+
+    uint32_t max = do_min_max<1>(array_view);
+    unsigned max_len = hex_len(max);
+
+    size_t mem_upper_bound =
+        (max_len + 4) * n + (n_len + 8) * (n / 8) + name_len + 128;
+    buf.reset(w = new char[mem_upper_bound]);
+
+    w += snprintf(
+        w, mem_upper_bound, "alignas(%sint%u_t) const %sint%u_t %.*s[%#zx] = {",
+        (type & 1) ? "" : "u", (type + 1) & ~1u, (type & 1) ? "" : "u",
+        (type + 1) & ~1u, int(name_len), name, n);
+
+    size_t i = 0;
+    while (view) {
+      uint32_t v = view.next();
+      if (i % 8 == 0) {
+        w = copy_string(w, "\n  /* 0x");
+        w = write_hex(w, i, n_len - 2);
+        w = copy_string(w, " */");
+      }
+      w = copy_string(w, " 0x");
+      w = write_hex(w, v, max_len - 2);
+      *w++ = ',';
+      ++i;
     }
-    w = copy_string(w, " 0x");
-    w = write_hex(w, v, max_len - 2);
-    *w++ = ',';
-    ++i;
+    if (*(w - 1) == ',') --w;
+    w = copy_string(w, "\n};\n\n");
   }
-  if (*(w - 1) == ',') --w;
-  w = copy_string(w, "\n};\n\n");
 
   return Py_BuildValue("s#", buf.get(), Py_ssize_t(w - buf.get()));
 }

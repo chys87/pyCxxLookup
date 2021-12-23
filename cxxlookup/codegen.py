@@ -33,6 +33,7 @@
 from collections import defaultdict
 from fractions import Fraction
 import math
+from multiprocessing.pool import ThreadPool
 import string
 
 import numpy as np
@@ -51,19 +52,33 @@ COMMON_HEADERS = r'''#include <inttypes.h>
 def make_code(func_name, base, values, hole, opt):
     groups = groupify.groupify(base, values, hole, opt)
 
-    res = []
     codes = {}  # lo: (hi, code)
+    statics = {}  # lo: statics
 
+    # Do it in parallel.  Many NumPy/SciPy/_speedups methods release GIL
+    with ThreadPool() as pool:
+        @utils.thread_profiling
+        def gen_group(pair):
+            lo, values = pair
+            range_name = f'{func_name}_{lo:x}_{lo+values.size:x}'
+            expr, subexprs = MakeCodeForRange(
+                lo, values, range_name, opt, pool).expr_tuple
+            code, static = _format_code(expr, subexprs)
+            codes[lo] = lo + values.size, code
+            static = filter(None, static)
+            if static:
+                statics[lo] = static
+
+        # Submit big groups before small ones, so that we likely get
+        # better parallelism
+        pool.map(gen_group,
+                 sorted(groups.items(), key=lambda x: x[1].size, reverse=True))
+
+    res = []
     res.append('namespace {\n\n')
 
-    for lo, values in sorted(groups.items()):
-        range_name = '{}_{:x}_{:x}'.format(func_name, lo, lo + values.size)
-        expr, subexprs = MakeCodeForRange(
-            lo, values, range_name, opt).expr_tuple
-
-        code, static = _format_code(expr, subexprs)
-        codes[lo] = lo + values.size, code
-        res.extend(filter(None, static))
+    for lo, static in sorted(statics.items()):
+        res.extend(static)
 
     hole_code = _format_code(Const(32, hole), None)[0]
 
@@ -169,11 +184,12 @@ def _format_code(expr, subexprs):
 
 
 class MakeCodeForRange:
-    def __init__(self, lo, values, table_name, opt):
+    def __init__(self, lo, values, table_name, opt, thread_pool):
         self._lo = lo
         self.values = values
         self._table_name = table_name
         self._opt = opt
+        self._thread_pool = thread_pool
 
     __var_c = FixedVar(32, 'c')
     __var_cl = FixedVar(64, 'cl')
@@ -452,14 +468,17 @@ class MakeCodeForRange:
             best_uniq = uniq
             best_bits = maxv_bits
 
-            for slope_num, slope_denom in self._yield_possible_slopes(values):
+            slopes = sorted(set(self._yield_possible_slopes(values)),
+                            key=lambda x: x[1])
+
+            for slope_num, slope_denom in slopes:
                 reduced_values = values - \
                     np.arange(0, slope_num * num, slope_num, dtype=np.int64) \
                     // slope_denom
                 # Negative values may cause problems
                 offset = utils.np_min(reduced_values)
-                reduced_values -= offset
-                reduced_values = reduced_values.astype(np.uint32)
+                reduced_values = np.subtract(reduced_values, offset,
+                                             dtype=np.uint32, casting='unsafe')
                 # Be careful to avoid infinite recursion
                 reduced_uniqs = utils.np_unique(reduced_values)
                 reduced_uniq, = reduced_uniqs.shape
@@ -690,7 +709,7 @@ class MakeCodeForRange:
         num, = values.shape
 
         # Most common adjacent differences.
-        # The remainer array will have many equal values
+        # The remainder array will have many equal values
         slope, slope_count = utils.most_common_element_count(
                     utils.slope_array(values, np.int64))
         if slope and slope_count * 3 >= num:
@@ -714,8 +733,8 @@ class MakeCodeForRange:
 
         for i in range(17):
             max_denominator = 1 << i
-            slope = slope_frac.limit_denominator(max_denominator)
-            yield from try_slope(slope)
+            slope_limited = slope_frac.limit_denominator(max_denominator)
+            yield from try_slope(slope_limited)
             yield from try_slope(Fraction(int(slope * max_denominator),
                                           max_denominator))
 
