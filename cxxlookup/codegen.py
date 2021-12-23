@@ -737,6 +737,10 @@ class MakeCodeForRange:
             yield from try_slope(slope_limited)
             yield from try_slope(Fraction(int(slope * max_denominator),
                                           max_denominator))
+            # If slope_limited is already very close to the real slope,
+            # don't try more
+            if abs(float(slope_limited) - float(slope_frac)) * num <= 1:
+                break
 
     def _overhead(self, expr, *, id=id):
         """Estimate the overhead of an expression.
