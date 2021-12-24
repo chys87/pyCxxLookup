@@ -69,7 +69,7 @@ def make_code(func_name, base, values, hole, opt):
                 statics[lo] = static
 
         # Submit big groups before small ones, so that we likely get
-        # better parallelism
+        # better parallelization
         utils.thread_pool_map(pool, gen_group,
                  sorted(groups.items(), key=lambda x: x[1].size, reverse=True))
 
@@ -728,7 +728,8 @@ class MakeCodeForRange:
         # Linear regression
         res = linregress(np.arange(num, dtype=np.float32),
                          values.astype(np.float32))
-        slope_frac = Fraction(res.slope)
+        slope = res.slope
+        slope_frac = Fraction(slope)
 
         last_denominator = 0
 
