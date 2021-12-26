@@ -31,6 +31,8 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 
+import threading
+
 from . import utils
 
 try:
@@ -306,31 +308,28 @@ class ExprTempVar(ExprVar):
 class ExprConst(Expr):
     _POOL_SIZE = 4096
     _pool = [None] * _POOL_SIZE
+    _pool_lock = threading.Lock()
 
-    def __init__(self, type, value, *, pooled=False, int=int):
-        super().__init__()
+    def __new__(cls, type, value):
+        if type == 32 and 0 <= value < cls._POOL_SIZE:
+            self = cls._pool[value]
+            if self is None:
+                with cls._pool_lock:
+                    self = cls._pool[value]
+                    if self is None:
+                        self = super(ExprConst, cls).__new__(cls)
+                        super(ExprConst, self).__init__()
+                        self.rtype = type
+                        self.value = int(value)
+                        self.__dict__['optimized'] = self
+                        cls._pool[value] = self
+            return self
+
+        self = super(ExprConst, cls).__new__(cls)
+        super(ExprConst, self).__init__()
         self.rtype = type
         self.value = int(value)
-        self.pooled = pooled
-
-    @staticmethod
-    def make(type, value):
-        cls = ExprConst
-        if type == 32 and 0 <= value < cls._POOL_SIZE:
-            res = cls._pool[value]
-            if res is None:
-                cls._pool[value] = res = cls(type, value, pooled=True)
-            return res
-        return cls(type, value)
-
-    @utils.cached_property
-    def optimized(self):
-        if not self.pooled and self.rtype == 32 and \
-                0 <= (value := self.value) < self._POOL_SIZE:
-            res = self._pool[self.value]
-            if res is None:
-                self.pooled = True
-                self._pool[value] = res = self
+        self.__dict__['optimized'] = self
         return self
 
     def __str(self, omit_type=False):
@@ -365,7 +364,7 @@ class ExprConst(Expr):
         if const_value == 0:
             return None
         else:
-            return ExprConst.make(const_type, const_value)
+            return ExprConst(const_type, const_value)
 
     def __neg__(self):
         return Const(self.rtype, -self.value)
@@ -1100,7 +1099,7 @@ FixedVar = ExprFixedVar
 TempVar = ExprTempVar
 
 
-Const = ExprConst.make
+Const = ExprConst
 
 
 def Add(*in_exprs):
