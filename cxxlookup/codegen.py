@@ -466,8 +466,10 @@ class MakeCodeForRange:
             mask = 0
             for k, v in enumerate(values):
                 mask |= (int(v) + offset) << (k * bits)
-            expr = inexpr_base0 * bits
-            expr = Cast(32, Const(Bits, mask) >> expr) & ((1 << bits) - 1)
+            expr = Const(Bits, mask) >> (inexpr_base0 * bits)
+            if Bits > 32:
+                expr = Cast(32, expr)
+            expr = expr & ((1 << bits) - 1)
             add = addition - offset
             if add:
                 expr = expr + add
