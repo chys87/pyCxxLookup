@@ -360,6 +360,13 @@ class ExprConst(Expr):
     @staticmethod
     def combine(const_exprs):
         """Combine multiple ExprConst into one."""
+        if len(const_exprs) == 1:
+            expr = const_exprs[0]
+            if expr.value:
+                return expr
+            else:
+                return None
+
         const_value = 0
         const_type = 32
         for expr in const_exprs:
@@ -455,7 +462,8 @@ class ExprAdd(Expr):
         if len(exprs) == 1 and not const:
             return exprs[0]
 
-        if exprs == self.exprs and const == self.const:
+        if const is self.const and len(exprs) == len(self.exprs) and \
+                list(map(id, exprs)) == list(map(id, self.exprs)):
             return self
         else:
             return ExprAdd(exprs, const).force_optimized
