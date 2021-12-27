@@ -443,9 +443,7 @@ class ExprAdd(Expr):
             const_value = const.value
             for i, expr in enumerate(exprs):
                 if expr.IS_COND and \
-                        expr.exprT.IS_CONST and expr.exprF.IS_CONST and \
-                        (min(expr.exprT.value, expr.exprF.value) + const_value
-                         >= 0):
+                        expr.exprT.IS_CONST and expr.exprF.IS_CONST:
                     expr = ExprCond(
                         expr.cond,
                         Const(self.rtype, expr.exprT.value + const_value),
