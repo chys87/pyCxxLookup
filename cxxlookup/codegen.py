@@ -379,16 +379,28 @@ class MakeCodeForRange:
             elif num <= 64:
                 # Use bit test.
                 mask = 0
-                value0, value1 = uniqs
+                value0 = int(uniqs[0])
+                value1 = int(uniqs[1])
+                # Prefer value1 == value0 + 1, but if that's impossible,
+                # prefer the bitmask to be smaller
+                if value1 == value0 + 1:
+                    pass
+                elif value1 == values[-1]:
+                    value0, value1 = value1, value0
+
                 for k in (values == value1).nonzero()[0]:
                     mask |= 1 << int(k)
 
                 Bits = 64 if num > 32 else 32
                 expr = (Const(Bits, mask) >> inexpr_base0) & 1
-                if (value1 + addition != 1) or (value0 + addition != 0):
+
+                if value1 == value0 + 1:
+                    if Bits > 32:
+                        expr = Cast(32, expr)
+                    if value0 + addition != 0:
+                        expr = expr + (value0 + addition)
+                else:
                     expr = Cond(expr, value1 + addition, value0 + addition)
-                elif Bits > 32:
-                    expr = Cast(32, expr)
                 yield expr
                 return
 
