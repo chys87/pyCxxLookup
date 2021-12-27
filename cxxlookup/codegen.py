@@ -787,21 +787,8 @@ class MakeCodeForRange:
                 continue
             visited_add(idx)
 
-            if x.IS_VAR:
-                pass
-            elif x.IS_TABLE:
-                total_bytes += x.table_bytes()
-                extra += 2
-            elif x.IS_CAST:
-                pass
-            elif x.IS_CONST:
-                extra += (x.rtype > 32) + 1
-            elif x.IS_COND:
-                extra += 3
-            elif x.IS_DIV_MOD:
-                extra += 7
-            else:
-                extra += 2
+            extra += x.overhead
+            total_bytes += x.static_bytes
 
             extend(x.children)
 

@@ -244,6 +244,10 @@ class Expr(metaclass=ExprMeta):
         '''
         return False
 
+    # Overhead of this expression only (not counting children)
+    overhead = 0
+    static_bytes = 0
+
 
 class ExprVar(Expr):
     def __init__(self, type):
@@ -372,6 +376,10 @@ class ExprConst(Expr):
     def _complicated(self, threshold):
         return False
 
+    @utils.cached_property
+    def overhead(self):
+        return (self.rtype > 32) + 1
+
 
 class ExprAdd(Expr):
     def __init__(self, exprs, const, *, max=max, tuple=tuple):
@@ -464,6 +472,13 @@ class ExprAdd(Expr):
         self.exprs = tuple(exprs)
         # Don't bother to do callback on self.const; it's never required
 
+    @utils.cached_property
+    def overhead(self):
+        n = len(self.exprs)
+        if self.const:
+            n += 1
+        return (n - 1) * 2
+
 
 class ExprBinary(Expr):
     def __init__(self, left, right, rtype=None, *, max=max):
@@ -482,6 +497,8 @@ class ExprBinary(Expr):
                              self.left._complicated(threshold))
         self.right = callback(self.right, allow_extract_table,
                               self.right._complicated(threshold))
+
+    overhead = 2
 
 
 class ExprShift(ExprBinary):
@@ -687,6 +704,13 @@ class ExprMul(ExprBinary):
 
         return self
 
+    @utils.cached_property
+    def overhead(self):
+        if self.left.IS_CONST or self.right.IS_CONST:
+            return 2
+        else:
+            return 4
+
 
 class ExprDiv(ExprBinary):
     IS_ALSO = 'DIV_MOD',
@@ -720,6 +744,8 @@ class ExprDiv(ExprBinary):
 
         return self
 
+    overhead = 7
+
 
 class ExprMod(ExprBinary):
     IS_ALSO = 'DIV_MOD',
@@ -741,6 +767,8 @@ class ExprMod(ExprBinary):
                 return ExprAnd(self.left,
                                Const(right.rtype, value - 1)).optimized
         return self
+
+    overhead = 7
 
 
 class ExprAnd(ExprBinary):
@@ -804,6 +832,14 @@ class ExprAnd(ExprBinary):
     @utils.cached_property
     def is_predicate(self):
         return self.right.IS_CONST and self.right.value == 1
+
+    @utils.cached_property
+    def overhead(self):
+        if self.left.IS_RSHIFT and self.right.IS_CONST and \
+                self.right.value == 1:
+            # Bit-test, reduce overhead counting
+            return 0
+        return 2
 
 
 class ExprCompare(ExprBinary):
@@ -905,6 +941,8 @@ class ExprCast(Expr):
     def is_predicate(self):
         return self.value.is_predicate
 
+    overhead = 0
+
 
 class ExprCond(Expr):
     def __init__(self, cond, exprT, exprF):
@@ -979,6 +1017,8 @@ class ExprCond(Expr):
                 return ExprCond(cond.negated, exprF, exprT).optimized
 
         return self
+
+    overhead = 3
 
 
 class ExprTable(Expr):
@@ -1071,9 +1111,6 @@ class ExprTable(Expr):
 
         return self
 
-    def table_bytes(self, *, type_bytes=type_bytes):
-        return self.values.size * type_bytes(self.rtype)
-
     def extract_subexprs(self, threshold, callback, allow_extract_table):
         super().extract_subexprs(threshold, callback, allow_extract_table)
         self.var = callback(self.var, allow_extract_table,
@@ -1081,6 +1118,13 @@ class ExprTable(Expr):
 
     def _complicated(self, _threshold):
         return True
+
+    # Bytes taken by the table is independently calculated
+    overhead = 2
+
+    @utils.cached_property
+    def static_bytes(self):
+        return self.values.size * type_bytes(self.rtype)
 
 
 ### Factory functions
