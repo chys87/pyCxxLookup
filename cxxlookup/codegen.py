@@ -44,8 +44,7 @@ from . import groupify
 from . import utils
 
 
-COMMON_HEADERS = r'''#include <inttypes.h>
-#include <stdint.h>
+COMMON_HEADERS = r'''#include <stdint.h>
 '''
 
 
