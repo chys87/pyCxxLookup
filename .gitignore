@@ -5,3 +5,5 @@ Session.vim
 /build/
 /GNUmakefile
 /Makefile
+/*.egg-info/
+/dist/

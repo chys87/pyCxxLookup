@@ -44,8 +44,8 @@ import unicodedata
 
 def import_cxxlookup():
     global cxxlookup
-    from distutils.util import get_platform
-    plat = get_platform()
+    import setuptools
+    plat = setuptools.distutils.util.get_platform()
     major = sys.version_info.major
     minor = sys.version_info.minor
     path = os.path.join('build', 'lib.{}-{}.{}'.format(plat, major, minor))
