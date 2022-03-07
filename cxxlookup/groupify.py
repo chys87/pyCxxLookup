@@ -2,7 +2,7 @@
 # coding: utf-8
 # vim: set ts=4 sts=4 sw=4 expandtab cc=80:
 
-# Copyright (c) 2014, 2016, chys <admin@CHYS.INFO>
+# Copyright (c) 2014-2022, chys <admin@CHYS.INFO>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -162,7 +162,7 @@ def _remove_holes(group, hole, opt):
                 group[lo] = values = values[:-k]
         if values[0] == hole:
             k = utils.const_range(values)
-            if (k >= hole_threshold) or (lo == min(group)):
+            if (k >= hole_threshold) or (0 != lo == min(group)):
                 group[lo+k] = values[k:]
                 del group[lo]
 
