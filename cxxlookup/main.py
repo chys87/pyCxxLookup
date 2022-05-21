@@ -30,10 +30,11 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
+from typing import Sequence
 
 from . import codegen
 from .codegen import COMMON_HEADERS
-from .options import OPT_DEFAULT
+from .options import Options, OPT_DEFAULT
 from .test import run_test, TestError
 from . import utils
 
@@ -42,8 +43,8 @@ __all__ = ['TestError', 'COMMON_HEADERS', 'CxxLookup', 'make']
 
 
 class CxxLookup:
-    def __init__(self, func_name, base, values, hole=None,
-                 opt=OPT_DEFAULT):
+    def __init__(self, func_name: str, base: int, values: Sequence[int],
+                 hole: int | None = None, opt: Options = OPT_DEFAULT):
         self._func_name = func_name
         self._base = base
         self._values = utils.make_numpy_array(values)
@@ -52,22 +53,23 @@ class CxxLookup:
         self._hole = hole
         self._opt = opt
 
-    def make_code(self):
+    def make_code(self) -> str:
         return self.code
 
     @utils.cached_property
     @utils.profiling
-    def code(self):
+    def code(self) -> str:
         return codegen.make_code(self._func_name, self._base, self._values,
                                  self._hole, self._opt)
 
-    def test(self, cxx_name=None):
+    def test(self, cxx_name : str | None = None) -> None:
         run_test(self._func_name, self._base, self._values, self._hole,
                  COMMON_HEADERS, self.make_code(),
                  cxx_name=cxx_name)
 
 
-def make(func_name, base, values, hole=None, opt=OPT_DEFAULT):
+def make(func_name: str, base: int, values: Sequence[int],
+         hole: int | None = None, opt: Options = OPT_DEFAULT) -> str:
     obj = CxxLookup(func_name, base, values, hole, opt)
     obj.test()
     return obj.make_code()

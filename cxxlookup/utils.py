@@ -44,7 +44,7 @@ except ImportError:
     _speedups = None
 
 
-def is_pow2(v):
+def is_pow2(v: int) -> bool:
     '''
     >>> is_pow2(0)
     False

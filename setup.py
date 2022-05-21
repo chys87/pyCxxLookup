@@ -61,7 +61,9 @@ def main():
           description='Generate C++ lookup functions with Python 3.',
           packages=['cxxlookup'],
           ext_package='cxxlookup',
-          ext_modules=ext_modules)
+          ext_modules=ext_modules,
+          package_data={'cxxlookup': ['py.typed']},
+          include_package_data=True)
 
 
 if __name__ == '__main__':
