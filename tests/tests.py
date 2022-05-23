@@ -44,13 +44,23 @@ import unicodedata
 
 def import_cxxlookup():
     global cxxlookup
-    import setuptools
-    plat = setuptools.distutils.util.get_platform()
-    major = sys.version_info.major
-    minor = sys.version_info.minor
-    path = os.path.join('build', 'lib.{}-{}.{}'.format(plat, major, minor))
-    sys.path.insert(0, path)
+    # build dir format has changed from previous setuptools versions.
+    # Now we choose the newest directory
+    if os.path.isdir('build'):
+        best_name = None
+        best_mtime = 0
+        with os.scandir('build') as scanner:
+            for entry in scanner:
+                if not entry.name.startswith('lib.'):
+                    continue
+                if (mtime := entry.stat().st_mtime) > best_mtime:
+                    best_name = entry.name
+                    best_mtime = mtime
+        if best_name:
+            path = os.path.join('build', best_name)
+            sys.path.insert(0, path)
     import cxxlookup
+    print('Imported cxxlookup', cxxlookup, file=sys.stderr)
 
 
 def static_check():
