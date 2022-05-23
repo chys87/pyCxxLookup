@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # vim: set ts=4 sts=4 sw=4 expandtab cc=80:
 
-# Copyright (c) 2014, 2016, chys <admin@CHYS.INFO>
+# Copyright (c) 2014-2022, chys <admin@CHYS.INFO>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -62,7 +62,7 @@ class CxxLookup:
         return codegen.make_code(self._func_name, self._base, self._values,
                                  self._hole, self._opt)
 
-    def test(self, cxx_name : str | None = None) -> None:
+    def test(self, cxx_name: str | None = None) -> None:
         run_test(self._func_name, self._base, self._values, self._hole,
                  COMMON_HEADERS, self.make_code(),
                  cxx_name=cxx_name)

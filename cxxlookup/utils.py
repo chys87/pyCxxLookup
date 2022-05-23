@@ -2,7 +2,7 @@
 # coding: utf-8
 # vim: set ts=4 sts=4 sw=4 expandtab cc=80:
 
-# Copyright (c) 2014, 2016, chys <admin@CHYS.INFO>
+# Copyright (c) 2014-2022, chys <admin@CHYS.INFO>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -339,9 +339,11 @@ def np_cycle(array, *, max_cycle=None,
     100
     >>> np_cycle(np.array(list(range(100)) * 9, dtype=np.uint64))
     100
-    >>> np_cycle(np.array(list(range(100)) * 9 + list(range(50)), dtype=np.uint32))
+    >>> np_cycle(np.array(list(range(100)) * 9 + list(range(50)),
+    ...                   dtype=np.uint32))
     100
-    >>> np_cycle(np.array(list(range(100)) * 9 + list(range(50)), dtype=np.uint64))
+    >>> np_cycle(np.array(list(range(100)) * 9 + list(range(50)),
+    ...                   dtype=np.uint64))
     100
     >>> np_cycle(np.arange(100, dtype=np.uint32))
     0

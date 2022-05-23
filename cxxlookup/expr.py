@@ -994,7 +994,7 @@ class ExprCond(Expr):
                 (cond.value.IS_COMPARE or
                  (cond.value.IS_AND and cond.value.right.IS_CONST and
                   cond.value.right.value == 1)):
-             cond = cond.value
+            cond = cond.value
         if cond is not self.cond:
             return ExprCond(cond, exprT, exprF).optimized
 

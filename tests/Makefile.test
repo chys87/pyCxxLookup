@@ -1,6 +1,6 @@
 # Symlink this file to .. if you need it
 
-.PHONY: all clean install build test
+.PHONY: all clean install build test flake8 mypy static
 
 all: build
 
@@ -16,3 +16,11 @@ install:
 
 test:
 	tests/tests.py
+
+static: mypy flake8
+
+mypy:
+	python3 -m mypy cxxlookup
+
+flake8:
+	python3 -m flake8 cxxlookup

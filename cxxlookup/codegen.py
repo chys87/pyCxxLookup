@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # vim: set ts=4 sts=4 sw=4 expandtab cc=80:
 
-# Copyright (c) 2014-2021, chys <admin@CHYS.INFO>
+# Copyright (c) 2014-2022, chys <admin@CHYS.INFO>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -69,8 +69,9 @@ def make_code(func_name, base, values, hole, opt):
 
         # Submit big groups before small ones, so that we likely get
         # better parallelization
-        utils.thread_pool_map(pool, gen_group,
-                 sorted(groups.items(), key=lambda x: x[1].size, reverse=True))
+        utils.thread_pool_map(
+            pool, gen_group,
+            sorted(groups.items(), key=lambda x: x[1].size, reverse=True))
 
     res = []
     res.append('namespace {\n\n')
@@ -134,7 +135,8 @@ def _format_code(expr, subexprs):
 
     if not added_var:
         # No temporary variable
-        main_str = '\n      return {};\n'.format(utils.trim_brackets(str(expr)))
+        main_str = '\n      return {};\n'.format(
+            utils.trim_brackets(str(expr)))
         main_statics = expr.statics(visited_set)
         return main_str, (main_statics,)
 
@@ -202,6 +204,7 @@ class MakeCodeForRange:
         # Expressions appearing more than once are always extracted
         # (except variables and constants)
         visited_times = defaultdict(int)
+
         def visit(expr):
             if expr.IS_VAR or expr.IS_CONST:
                 return
@@ -210,6 +213,7 @@ class MakeCodeForRange:
             if visited_times[idx] == 1:
                 for subexpr in expr.children:
                     visit(subexpr)
+
         visit(expr)
 
         subexprs = []
@@ -537,8 +541,8 @@ class MakeCodeForRange:
                     continue
                 base_values = utils.np_min_by_chunk(values, stride)
                 delta = values - np.repeat(base_values, stride)[:num]
-                if (np.count_nonzero(delta) < values_nonzeros / (stride * .9) or
-                        utils.np_max(delta).bit_length() <= maxv_bits // 2):
+                if (np.count_nonzero(delta) < values_nonzeros / (stride * .9)
+                        or utils.np_max(delta).bit_length() <= maxv_bits // 2):
                     base_inexpr = inexpr_base0 // stride
                     base_expr = self._make_code(
                             0, base_values,
@@ -673,8 +677,8 @@ class MakeCodeForRange:
                 if k == 4:
                     # We must be very careful when k == 4
                     # If we just split it, two 4-bit values will be joined
-                    # in the recursion, and then split again, resulting in almost
-                    # uncontrollable recursions
+                    # in the recursion, and then split again, resulting in
+                    # almost uncontrollable recursions
                     if max(lo_uniq, hi_uniq) <= 4:
                         pass
                     else:

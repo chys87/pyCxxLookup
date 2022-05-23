@@ -101,6 +101,7 @@ def _naive_groupify(base, values, opt):
 
     temp_list = []
     temp_slope = None
+
     def emit_temp_list():
         nonlocal temp_slope
         if temp_slope is None:
