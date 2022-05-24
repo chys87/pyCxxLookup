@@ -144,6 +144,7 @@ def _():
         cxxlookup.expr,
         cxxlookup.groupify,
         cxxlookup.utils,
+        cxxlookup.cutils,
     ]
 
     def run(*args, **kwargs):

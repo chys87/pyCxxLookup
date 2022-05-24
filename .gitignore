@@ -7,3 +7,4 @@ Session.vim
 /Makefile
 /*.egg-info/
 /dist/
+/cython_build/

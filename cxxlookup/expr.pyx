@@ -1,7 +1,9 @@
-#!/usr/bin/env python3
-# vim: set ts=4 sts=4 sw=4 expandtab cc=80:
+# distutils: language=c++
+# cython: language_level=3
+# cython: profile=True
 
-# Copyright (c) 2014-2021, chys <admin@CHYS.INFO>
+
+# Copyright (c) 2014-2022, chys <admin@CHYS.INFO>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -30,15 +32,13 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-
 import threading
 
-from . import utils
+from libc.stdint cimport int64_t, uint64_t
 
-try:
-    from . import _speedups
-except ImportError:
-    _speedups = None
+from . import cutils
+from . import utils
+from . import _speedups
 
 
 # Signed types only allowed for intermediate values
@@ -56,15 +56,15 @@ def type_name(type):
         return 'uint{}_t'.format(type)
 
 
-def type_bytes(type):
+def type_bytes(int type_):
     '''
     >>> list(map(type_bytes, [7, 8, 15, 16, 31, 32, 63, 64]))
     [1, 1, 2, 2, 4, 4, 8, 8]
     '''
-    return (type + 7) // 8
+    return (type_ + 7) // 8
 
 
-def const_type(value):
+def const_type(uint64_t value) -> int:
     if value >= 2**16:
         if value >= 2**32:
             return 64
@@ -76,8 +76,8 @@ def const_type(value):
         return 8
 
 
-def type_max(type):
-    return (1 << type) - 1
+def type_max(int type_) -> int:
+    return (2ull << (type_ - 1)) - 1
 
 
 class ExprMeta(type):
@@ -143,29 +143,21 @@ class Expr(metaclass=ExprMeta):
 
     def walk(self):
         """Recursively visit itself and all children."""
-        yield self
-        q = [self]
-        q_pop = q.pop
-        q_extend = q.extend
-        while q:
-            expr = q_pop()
-            children = expr.children
-            yield from children
-            q_extend(children)
+        return cutils.walk(self)
 
     def walk_tempvar(self):
         """Shortcut for filter(lambda x: x.IS_TEMPVAR, self.walk())
         """
         return (x for x in self.walk() if x.IS_TEMPVAR)
 
-    def _complicated(self, threshold):
+    def _complicated(self, int threshold) -> bool:
         for expr in self.walk():
             threshold -= 1
             if not threshold:
                 return True
         return False
 
-    @utils.cached_property
+    @cutils.cached_property
     def has_table(self):
         '''Recursively checks whether the expression contains ExprTable.
         If true, the expression can be unsafe to extract in ExprCond
@@ -237,12 +229,9 @@ class Expr(metaclass=ExprMeta):
     __rmul__ = __mul__
     __rand__ = __and__
 
-    @utils.cached_property
-    def is_predicate(self):
-        '''Returns whether the expression is likely a predicate
-        (i.e. can only return 0 or 1)
-        '''
-        return False
+    # Whether the expression is likely a predicate
+    # (i.e. only returns 0 or 1)
+    is_predicate = False
 
     # Overhead of this expression only (not counting children)
     overhead = 0
@@ -314,7 +303,7 @@ class ExprConst(Expr):
     _pool = [None] * _POOL_SIZE
     _pool_lock = threading.Lock()
 
-    def __new__(cls, type, value):
+    def __new__(cls, int type, value):
         if type == 32 and 0 <= value < cls._POOL_SIZE:
             self = cls._pool[value]
             if self is None:
@@ -338,7 +327,8 @@ class ExprConst(Expr):
 
     def __str(self, omit_type=False):
         value = self.value
-        if (rtype := self.rtype) % 8 == 0:
+        rtype = self.rtype
+        if rtype % 8 == 0:
             value &= type_max(rtype)
         if -16 <= value <= 16:
             value_s = str(value)
@@ -383,31 +373,32 @@ class ExprConst(Expr):
     def _complicated(self, threshold):
         return False
 
-    @utils.cached_property
+    @cutils.cached_property
     def overhead(self):
-        return (self.rtype > 32) + 1
+        return (<int>self.rtype > 32) + 1
 
 
 class ExprAdd(Expr):
-    def __init__(self, exprs, const, *, max=max, tuple=tuple):
+    def __init__(self, exprs, const_):
         super().__init__()
-        assert const is None or const.IS_CONST
+        assert const_ is None or const_.IS_CONST
         self.exprs = tuple(expr.optimized for expr in exprs)
-        self.const = const
+        self.const = const_
         rtype = max([x.rtype for x in self.children])
         self.rtype = max(rtype, 31)  # C type-promotion rule
 
     def __str__(self):
         res = ' + '.join(map(str, self.exprs))
-        if (const := self.const):
+        const_ = self.const
+        if const_:
             left_rtype = max(expr.rtype for expr in self.exprs)
-            const_value = const.value
-            const_rtype = const.rtype
+            const_value = const_.value
+            const_rtype = const_.rtype
             if const_value >= 0:
                 if left_rtype >= const_rtype:
-                    res += f' + {const:U}'
+                    res += f' + {const_:U}'
                 else:
-                    res += f' + {const}'
+                    res += f' + {const_}'
             else:
                 abs_const = Const(const_rtype, -const_value)
                 if left_rtype >= 31 and left_rtype >= const_rtype:
@@ -418,13 +409,13 @@ class ExprAdd(Expr):
 
     @property
     def children(self):
-        const = self.const
-        if const:
-            return self.exprs + (const,)
+        const_ = self.const
+        if const_:
+            return self.exprs + (const_,)
         else:
             return self.exprs
 
-    @utils.cached_property
+    @cutils.cached_property
     def optimized(self):
         exprs = []
         const_exprs = []
@@ -443,11 +434,11 @@ class ExprAdd(Expr):
             else:
                 exprs.append(expr)
 
-        const = ExprConst.combine(const_exprs)
+        const_ = ExprConst.combine(const_exprs)
 
         # (a ? c1 : c2) + c3 ==> (a ? c1 + c3 : c2 + c3)
-        if const:
-            const_value = const.value
+        if const_:
+            const_value = const_.value
             for i, expr in enumerate(exprs):
                 if expr.IS_COND and \
                         expr.exprT.IS_CONST and expr.exprF.IS_CONST:
@@ -456,17 +447,17 @@ class ExprAdd(Expr):
                         Const(self.rtype, expr.exprT.value + const_value),
                         Const(self.rtype, expr.exprF.value + const_value))
                     exprs[i] = expr.optimized
-                    const = None
+                    const_ = None
                     break
 
-        if len(exprs) == 1 and not const:
+        if len(exprs) == 1 and not const_:
             return exprs[0]
 
-        if const is self.const and len(exprs) == len(self.exprs) and \
+        if const_ is self.const and len(exprs) == len(self.exprs) and \
                 list(map(id, exprs)) == list(map(id, self.exprs)):
             return self
         else:
-            return ExprAdd(exprs, const).force_optimized
+            return ExprAdd(exprs, const_).force_optimized
 
     def extract_subexprs(self, threshold, callback, allow_extract_table):
         exprs = []
@@ -478,7 +469,7 @@ class ExprAdd(Expr):
         self.exprs = tuple(exprs)
         # Don't bother to do callback on self.const; it's never required
 
-    @utils.cached_property
+    @cutils.cached_property
     def overhead(self):
         n = len(self.exprs)
         if self.const:
@@ -487,7 +478,7 @@ class ExprAdd(Expr):
 
 
 class ExprBinary(Expr):
-    def __init__(self, left, right, rtype=None, *, max=max):
+    def __init__(self, left, right, rtype=None):
         super().__init__()
         self.left = left = left.optimized
         self.right = right = right.optimized
@@ -524,7 +515,7 @@ class ExprLShift(ExprShift):
         else:
             return '({} << {})'.format(self.left, right)
 
-    @utils.cached_property
+    @cutils.cached_property
     def optimized(self):
         left = self.left
         right = self.right
@@ -608,7 +599,7 @@ class ExprRShift(ExprShift):
 
         return '({} >> {})'.format(self.left, right_s)
 
-    @utils.cached_property
+    @cutils.cached_property
     def optimized(self):
         '''
         >>> expr = (Add(FixedVar(32, 'c'), 30) >> 2)
@@ -663,7 +654,7 @@ class ExprMul(ExprBinary):
         else:
             return f'({left} * {right})'
 
-    @utils.cached_property
+    @cutils.cached_property
     def optimized(self):
         left = self.left
         right = self.right
@@ -685,7 +676,7 @@ class ExprMul(ExprBinary):
                 return Const(32, 0)
             elif rv == 1:
                 return left
-            elif utils.is_pow2(rv):
+            elif cutils.is_pow2(rv):
                 expr = ExprLShift(left, Const(32, rv.bit_length() - 1))
                 return expr.optimized
 
@@ -710,7 +701,7 @@ class ExprMul(ExprBinary):
 
         return self
 
-    @utils.cached_property
+    @cutils.cached_property
     def overhead(self):
         if self.left.IS_CONST or self.right.IS_CONST:
             return 2
@@ -734,7 +725,7 @@ class ExprDiv(ExprBinary):
         else:
             return f'({left} / {right})'
 
-    @utils.cached_property
+    @cutils.cached_property
     def optimized(self):
         left = self.left
         right = self.right
@@ -744,7 +735,7 @@ class ExprDiv(ExprBinary):
                 raise ZeroDivisionError
             elif rv == 1:
                 return left
-            elif utils.is_pow2(rv):
+            elif cutils.is_pow2(rv):
                 expr = ExprRShift(left, Const(32, rv.bit_length() - 1))
                 return expr.optimized
 
@@ -764,7 +755,7 @@ class ExprMod(ExprBinary):
         else:
             return f'({left} % {right})'
 
-    @utils.cached_property
+    @cutils.cached_property
     def optimized(self):
         right = self.right
         if right.IS_CONST:
@@ -786,7 +777,7 @@ class ExprAnd(ExprBinary):
         else:
             return f'({left} & {right})'
 
-    @utils.cached_property
+    @cutils.cached_property
     def optimized(self):
         left = self.left
         right = self.right
@@ -835,11 +826,11 @@ class ExprAnd(ExprBinary):
 
         return self
 
-    @utils.cached_property
+    @cutils.cached_property
     def is_predicate(self):
         return self.right.IS_CONST and self.right.value == 1
 
-    @utils.cached_property
+    @cutils.cached_property
     def overhead(self):
         if self.left.IS_RSHIFT and self.right.IS_CONST and \
                 self.right.value == 1:
@@ -867,13 +858,13 @@ class ExprCompare(ExprBinary):
     def __str__(self):
         return f'({self.left:U} {self.compare} {self.right:U})'
 
-    @utils.cached_property
+    @cutils.cached_property
     def negated(self):
         neg = ExprCompare(self.left, self.__negate[self.compare], self.right)
         neg.__dict__['negated'] = self
         return neg
 
-    @utils.cached_property
+    @cutils.cached_property
     def optimized(self):
         left = self.left
         right = self.right
@@ -925,7 +916,7 @@ class ExprCast(Expr):
     def children(self):
         return self.value,
 
-    @utils.cached_property
+    @cutils.cached_property
     def optimized(self):
         rtype = self.rtype
         value = self.value
@@ -943,7 +934,7 @@ class ExprCast(Expr):
         self.value = callback(self.value, allow_extract_table,
                               self.value._complicated(threshold))
 
-    @utils.cached_property
+    @cutils.cached_property
     def is_predicate(self):
         return self.value.is_predicate
 
@@ -982,7 +973,7 @@ class ExprCond(Expr):
         self.exprF = callback(self.exprF, allow_extract_table,
                               self.exprF._complicated(threshold))
 
-    @utils.cached_property
+    @cutils.cached_property
     def optimized(self):
         cond = self.cond
         exprT = self.exprT
@@ -1065,11 +1056,10 @@ class ExprTable(Expr):
 
         var_statics = self.var.statics(vs)
 
-        if _speedups:
-            c_array = _speedups.format_c_array(
-                self.values, self.rtype, self.name)
-            if c_array is not None:
-                return var_statics + c_array
+        c_array = _speedups.format_c_array(
+            self.values, self.rtype, self.name)
+        if c_array is not None:
+            return var_statics + c_array
 
         res = [var_statics]
         res_append = res.append
@@ -1098,7 +1088,7 @@ class ExprTable(Expr):
     def children(self):
         return self.var,
 
-    @utils.cached_property
+    @cutils.cached_property
     def optimized(self):
         var = self.var
         # If var contains a cast, it's usually unnecessary
@@ -1128,7 +1118,7 @@ class ExprTable(Expr):
     # Bytes taken by the table is independently calculated
     overhead = 2
 
-    @utils.cached_property
+    @cutils.cached_property
     def static_bytes(self):
         return self.values.size * type_bytes(self.rtype)
 

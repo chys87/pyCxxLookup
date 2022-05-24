@@ -31,25 +31,40 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
+from pathlib import Path
 from setuptools import setup, Extension
+import shutil
 import os
 import sys
 
+from Cython.Build import cythonize
 import numpy as np
 
 
 def main():
     if 'linux' in sys.platform:
         DEFAULT_CFLAGS = \
-            '-O2 -march=native -fno-exceptions -Wl,--as-needed '\
-            '-fvisibility-inlines-hidden -fvisibility=hidden -flto '\
-            '-std=gnu++17'
+            '-O3 -march=native -pthread '\
+            '-fvisibility-inlines-hidden -fvisibility=hidden -flto'
         os.environ.setdefault('CFLAGS', DEFAULT_CFLAGS)
-        os.environ.setdefault('CXXFLAGS', DEFAULT_CFLAGS)
+        os.environ.setdefault('CXXFLAGS', DEFAULT_CFLAGS + ' -std=gnu++20')
+
+        if shutil.which('clang++') and shutil.which('clang'):
+            os.environ['CC'] = 'clang'
+            os.environ['CXX'] = 'clang++'
+            os.environ['LDSHARED'] = 'clang++ -shared'
+
 
     ext_modules = [
         Extension('_speedups', ['cxxlookup/_speedups.cpp'],
-                  include_dirs=[np.get_include()]),
+                  include_dirs=[np.get_include()],
+                  libraries=['absl_raw_hash_set', 'absl_hash']),
+        Extension('cutils', ['cxxlookup/cutils.pyx'],
+                  libraries=['absl_raw_hash_set', 'absl_hash']),
+        Extension('expr', ['cxxlookup/expr.pyx'],
+                  libraries=['absl_raw_hash_set', 'absl_hash']),
+        Extension('codegen', ['cxxlookup/codegen.pyx'],
+                  libraries=['absl_raw_hash_set', 'absl_hash']),
     ]
 
     setup(name='cxxlookup',
@@ -61,12 +76,15 @@ def main():
           description='Generate C++ lookup functions with Python 3.',
           packages=['cxxlookup'],
           ext_package='cxxlookup',
-          ext_modules=ext_modules,
+          ext_modules=cythonize(ext_modules,
+                                language_level=3,
+                                # Don't build in tree
+                                build_dir=Path("cython_build")),
           package_data={'cxxlookup': ['py.typed']},
           include_package_data=True,
+          zip_safe=False,
           install_requires=[
               'numpy',
-              'scipy',
           ])
 
 

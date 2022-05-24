@@ -38,85 +38,67 @@ import time
 
 import numpy as np
 
-try:
-    from . import _speedups
-except ImportError:
-    _speedups = None
+from . import cutils
+from . import _speedups
 
 
-def is_pow2(v: int) -> bool:
-    '''
-    >>> is_pow2(0)
-    False
-    >>> is_pow2(1)
-    True
-    >>> is_pow2(2)
-    True
-    >>> is_pow2(3)
-    False
-    '''
-    return v > 0 and not (v & (v - 1))
+is_pow2 = cutils.is_pow2
+cached_property = cutils.cached_property
 
 
 def make_numpy_array(values):
     return np.array(values, dtype=np.uint32)
 
 
-def most_common_element(arr, *, mode_cnt=_speedups and _speedups.mode_cnt):
+def most_common_element(arr, /):
     """Return the most common element of a numpy array"""
-    if mode_cnt:
-        res = mode_cnt(arr)
-        if res is not None:
-            return res[0]
+    res = _speedups.mode_cnt(arr)
+    if res is not None:
+        return res[0]
     u, indices = np.unique(arr, return_inverse=True)
     return int(u[np.argmax(np.bincount(indices))])
 
 
-def most_common_element_count(arr, *,
-                              mode_cnt=_speedups and _speedups.mode_cnt):
+def most_common_element_count(arr, /):
     """Return the most common element of a numpy array and its count
     >>> most_common_element_count(np.array([1,3,5,0,5,1,5], np.uint32))
     (5, 3)
     >>> most_common_element_count(np.array([1,3,5,0,5,1,5], np.int64))
     (5, 3)
     """
-    if mode_cnt:
-        res = mode_cnt(arr)
-        if res is not None:
-            return res
+    res = _speedups.mode_cnt(arr)
+    if res is not None:
+        return res
     u, indices = np.unique(arr, return_inverse=True)
     bincnt = np.bincount(indices)
     i = np.argmax(bincnt)
     return int(u[i]), int(bincnt[i])
 
 
-def is_const(array, *, is_const=_speedups and _speedups.is_const):
+def is_const(array, /):
     """Returns if the given array is constant"""
-    if is_const:
-        res = is_const(array)
-        if res is not None:
-            return res
+    res = _speedups.is_const(array)
+    if res is not None:
+        return res
     if array.size == 0:
         return True
     else:
         return (array == array[0]).all()
 
 
-def is_linear(array, *, is_linear=_speedups and _speedups.is_linear):
+def is_linear(array, /):
     """Returns if the given array is linear"""
-    if is_linear:
-        res = is_linear(array)
-        if res is not None:
-            return res
+    res = _speedups.is_linear(array)
+    if res is not None:
+        return res
     return is_const(slope_array(array, array.dtype.type))
 
 
-def const_range(array, *, const_range=_speedups and _speedups.const_range):
+def const_range(array, /):
     """Returns the max n, such that array[:n] is a constant array"""
-    if const_range:
-        res = const_range(array)
-        if res is not None:
-            return res
+    res = _speedups.const_range(array)
+    if res is not None:
+        return res
 
     if array.size == 0:
         return 0
@@ -180,8 +162,7 @@ def compress_array(array, n):
     return res
 
 
-def slope_array(array, dtype=np.int64, *,
-                slope_array=_speedups and _speedups.slope_array):
+def slope_array(array, /, dtype=np.int64):
     '''
     slope_array is similar to np.diff, but with speedups for certain types.
     Additionally, we support output types different than the input type.
@@ -189,24 +170,22 @@ def slope_array(array, dtype=np.int64, *,
     >>> slope_array(np.array([1,2,4,0,2], np.uint32), np.int64).tolist()
     [1, 2, -4, 2]
     '''
-    if slope_array:
-        res = slope_array(array, dtype)
-        if res is not None:
-            return res
+    res = _speedups.slope_array(array, dtype)
+    if res is not None:
+        return res
     return np.array(array[1:], dtype) - np.array(array[:-1], dtype)
 
 
-def gcd_many(array, *, gcd_many=_speedups and _speedups.gcd_many):
+def gcd_many(array, /):
     """
     >>> gcd_many(np.array([26, 39, 52], np.uint32))
     13
     >>> gcd_many(np.array([4, 8, 7], np.uint32))
     1
     """
-    if gcd_many:
-        res = gcd_many(array)
-        if res is not None:
-            return res
+    res = _speedups.gcd_many(array)
+    if res is not None:
+        return res
     res = 0
     for v in array:
         v = int(v)
@@ -233,7 +212,7 @@ def gcd_reduce(array):
     return gcd_many(slope_array(array, array.dtype.type))
 
 
-def np_unique(array, *, unique=_speedups and _speedups.unique):
+def np_unique(array, /):
     '''np.unique with speedups for certain types
 
     >>> np_unique(np.array([1,3,5,7,1,2,3,4], np.uint32)).tolist()
@@ -241,39 +220,35 @@ def np_unique(array, *, unique=_speedups and _speedups.unique):
     >>> np_unique(np.array([1,3,5,7,1,2,3,4], np.int64)).tolist()
     [1, 2, 3, 4, 5, 7]
     '''
-    if unique:
-        res = unique(array)
-        if res is not None:
-            return res
+    res = _speedups.unique(array)
+    if res is not None:
+        return res
     return np.unique(array)
 
 
-def np_min(array, *, min_max=_speedups and _speedups.min_max):
+def np_min(array, /):
     '''
     >>> np_min(np.array([3,2,1,2,3], np.uint32))
     1
     '''
-    if min_max:
-        res = min_max(array, 0)
-        if res is not None:
-            return res
+    res = _speedups.min_max(array, 0)
+    if res is not None:
+        return res
     return int(array.min())
 
 
-def np_max(array, *, min_max=_speedups and _speedups.min_max):
+def np_max(array, /):
     '''
     >>> np_max(np.array([3,2,1,2,3], np.uint32))
     3
     '''
-    if min_max:
-        res = min_max(array, 1)
-        if res is not None:
-            return res
+    res = _speedups.min_max(array, 1)
+    if res is not None:
+        return res
     return int(array.max())
 
 
-def np_min_by_chunk(array, chunk_size, *,
-                    min_by_chunk=_speedups and _speedups.min_by_chunk):
+def np_min_by_chunk(array, chunk_size, /):
     '''Return the minimum values of each fixed-size chunk
 
     _speedups only implements uint32
@@ -283,10 +258,9 @@ def np_min_by_chunk(array, chunk_size, *,
     >>> np_min_by_chunk(np.array([1, 2, 2, 1, 3], np.int64), 2).tolist()
     [1, 1, 3]
     '''
-    if min_by_chunk:
-        res = min_by_chunk(array, chunk_size)
-        if res is not None:
-            return res
+    res = _speedups.min_by_chunk(array, chunk_size)
+    if res is not None:
+        return res
 
     n, = array.shape
     chunks = (n + chunk_size - 1) // chunk_size
@@ -298,35 +272,32 @@ def np_min_by_chunk(array, chunk_size, *,
     return np.min(np.reshape(padded, (chunks, chunk_size)), axis=1)
 
 
-def np_range(array, *, min_max=_speedups and _speedups.min_max):
+def np_range(array, /):
     '''
     >>> np_range(np.array([3,2,1,2,3], np.uint32))
     2
     '''
-    if min_max:
-        res = min_max(array, 2)
-        if res is not None:
-            return res
+    res = _speedups.min_max(array, 2)
+    if res is not None:
+        return res
     return int(array.max()) - int(array.min())
 
 
-def np_array_equal(x, y, *, array_equal=_speedups and _speedups.array_equal):
+def np_array_equal(x, y, /):
     '''
     >>> np_array_equal(np.uint32([1, 2, 3]), np.uint32([1, 2, 3]))
     True
     >>> np_array_equal(np.uint32([1, 2, 3]), np.uint32([1, 2, 1]))
     False
     '''
-    if array_equal:
-        res = array_equal(x, y)
-        if res is not None:
-            return res
+    res = _speedups.array_equal(x, y)
+    if res is not None:
+        return res
     return (x == y).all()
 
 
-def np_cycle(array, *, max_cycle=None,
-             np_array_equal=np_array_equal, range=range,
-             array_cycle=_speedups and _speedups.array_cycle):
+def np_cycle(array, /, *, max_cycle=None,
+             np_array_equal=np_array_equal, range=range):
     '''Find minimun positive cycle of array.
 
     _speedups only implements uint32
@@ -350,10 +321,9 @@ def np_cycle(array, *, max_cycle=None,
     >>> np_cycle(np.arange(100, dtype=np.uint64))
     0
     '''
-    if array_cycle:
-        res = array_cycle(array, max_cycle or 0xffffffff)
-        if res is not None:
-            return res
+    res = _speedups.array_cycle(array, max_cycle or 0xffffffff)
+    if res is not None:
+        return res
 
     n, = array.shape
     if n < 2:
@@ -469,22 +439,6 @@ def thread_profiling(func):
             __thread_profiles.append(pr)
 
     return _func
-
-
-class cached_property:
-    def __init__(self, func):
-        self.func = func
-        self.__doc__ = func.__doc__
-        self.__name__ = func.__name__
-        self.__module__ = func.__module__
-
-    def __get__(self, obj, cls):
-        if obj is None:
-            return self
-
-        func = self.func
-        res = obj.__dict__[func.__name__] = func(obj)
-        return res
 
 
 class __ThreadPoolTask:
