@@ -372,8 +372,6 @@ cdef _gen_possible_slopes(np_values):
     slope_frac = Fraction(slope)
 
     cdef uint32_t last_denominator = 0
-    cdef int32_t numerator
-    cdef uint32_t denominator
     cdef uint32_t max_denominator
     cdef uint32_t i
     for i in range(17):
@@ -385,7 +383,7 @@ cdef _gen_possible_slopes(np_values):
             numerator = slope.numerator
             denominator = slope.denominator
             if numerator > 0 and denominator > last_denominator and \
-                    -0x80000000 <= <int64_t>numerator * (num - 1) <= 0x7fffffff:
+                    -0x80000000 <= numerator * (num - 1) <= 0x7fffffff:
                 last_denominator = denominator
                 res.add((numerator, denominator))
 
@@ -822,8 +820,8 @@ class MakeCodeForRange:
             return res
 
         # Most elements are almost linear, but a few outliers exist.
-        if not skip_almost_linear_reduce and maxdepth > 0 and num >= 6 and \
-                maxv >= 8:
+        if not skip_almost_linear_reduce and maxdepth > 0 and num >= 3 and \
+                maxv >= 4:
 
             linear_tasks = _prepare_almost_linear_tasks(
                 values, num, uniq, maxv_bits)

@@ -156,6 +156,8 @@ def linregress_slope(uint32_t[::1] y) -> float:
     0.0
     >>> linregress_slope(np.arange(1, 100, 3, dtype=np.uint32))
     3.0
+    >>> round(linregress_slope(np.arange(100, dtype=np.uint32) // 2), 3)
+    0.5
     '''
     #          sigma (y_i - y_bar)(x_i - x_bar)
     # slope = ---------------------------------
