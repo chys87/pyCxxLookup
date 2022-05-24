@@ -63,7 +63,11 @@ def main():
           ext_package='cxxlookup',
           ext_modules=ext_modules,
           package_data={'cxxlookup': ['py.typed']},
-          include_package_data=True)
+          include_package_data=True,
+          install_requires=[
+              'numpy',
+              'scipy',
+          ])
 
 
 if __name__ == '__main__':
