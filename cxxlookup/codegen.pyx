@@ -401,6 +401,8 @@ cdef _prepare_almost_linear_tasks(values, uint32_t num, uint32_t uniq,
     '''
     cdef uint32_t best_uniq = uniq
     cdef uint32_t best_bits = maxv_bits
+    cdef uint32_t reduced_uniq
+    cdef uint32_t reduced_maxv_bits
 
     slopes = sorted(_gen_possible_slopes(values), key=lambda x: x[1])
 
@@ -416,8 +418,8 @@ cdef _prepare_almost_linear_tasks(values, uint32_t num, uint32_t uniq,
                                      dtype=np.uint32, casting='unsafe')
         # Be careful to avoid infinite recursion
         reduced_uniqs = utils.np_unique(reduced_values)
-        reduced_uniq, = reduced_uniqs.shape
-        reduced_maxv_bits = int(reduced_uniqs[-1]).bit_length()
+        reduced_uniq = reduced_uniqs.shape[0]
+        reduced_maxv_bits = bit_length(reduced_uniqs[-1])
         if (reduced_uniq * 2 <= uniq and reduced_uniq < best_uniq) or \
                 reduced_maxv_bits < best_bits:
             best_uniq = min(best_uniq, reduced_uniq)
