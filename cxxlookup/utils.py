@@ -34,6 +34,7 @@
 import functools
 import os
 import sys
+import threading
 import time
 
 import numpy as np
@@ -368,34 +369,38 @@ def np_cycle(array, /, *, max_cycle=None,
 
 
 __thread_profiles = []
+__profiler_active = False
 
 
-def __profiling_enabled():
-    # We hope it can be set or unset at run-time, so put the check here
-    return bool(os.environ.get('pyCxxLookup_Profiling'))
+def __new_profile():
+    from cProfile import Profile
+    return Profile(time.thread_time_ns, 1e-9)
 
 
 def profiling(func):
     @functools.wraps(func)
     def _func(*args, **kwargs):
-        if not __profiling_enabled():
+        global __profiler_active
+
+        if not os.environ.get('pyCxxLookup_Profiling'):
             return func(*args, **kwargs)
 
         __thread_profiles.clear()
 
-        from cProfile import Profile
         import pstats
         import time
 
         wall_clock = time.time()
 
-        pr = Profile()
+        __profiler_active = True
+        pr = __new_profile()
         pr.enable()
         try:
             return func(*args, **kwargs)
 
         finally:
             pr.disable()
+            __profiler_active = False
             wall_time = time.time() - wall_clock
             print(f'Wall time: {wall_time:.3f} seconds')
 
@@ -421,15 +426,13 @@ def thread_profiling(func):
     '''
     @functools.wraps(func)
     def _func(*args, **kwargs):
-        if not __profiling_enabled():
+        if not __profiler_active:
             return func(*args, **kwargs)
-
-        from cProfile import Profile
 
         try:
             pr = __thread_profiles.pop()
         except IndexError:
-            pr = Profile()
+            pr = __new_profile()
         pr.enable()
         try:
             return func(*args, **kwargs)
@@ -442,25 +445,64 @@ def thread_profiling(func):
 
 
 class __ThreadPoolTask:
-    empty = object()
-
     def __init__(self, f, arglist):
         self._f = f
         self._pending = list(enumerate(arglist))
+        # Because we use pop to get tasks from _pending, we need a reversed
+        # list so that tasks are executed in their original order.
         self._pending.reverse()
-        self.results = [self.empty] * len(arglist)
+        self.results = [None] * len(arglist)
+        self._semaphore = threading.Semaphore(0)
 
     @thread_profiling
-    def run_in_thread(self, _):
-        return self.run()
-
-    def run(self):
+    def run_in_thread(self):
         while True:
             try:
                 i, arg = self._pending.pop()
             except IndexError:
                 return
+            try:
+                self.results[i] = self._f(arg)
+            finally:
+                self._semaphore.release()
+
+    def _ping_async_list(self, async_list):
+        for i in range(len(async_list) - 1, -1, -1):
+            async_obj = async_list[i]
+            if async_obj.ready():
+                async_obj.get()
+                del async_list[i]
+
+    def run_and_wait_all(self, thread_pool):
+        n = len(self.results)
+        async_list = [thread_pool.apply_async(self.run_in_thread)
+                      for _ in range(min(os.cpu_count(), n) - 1)]
+
+        # We should also run from main thread, to avoid deadlocking.
+        done = 0
+        while True:
+            try:
+                i, arg = self._pending.pop()
+            except IndexError:
+                break
             self.results[i] = self._f(arg)
+            done += 1
+
+            if self._semaphore.acquire(blocking=False):
+                done += 1
+                while self._semaphore.acquire(blocking=False):
+                    done += 1
+                # Whenever a task is finished in another thread, run
+                # _ping_async_list immediately so that exceptions are
+                # propagated to main thread as soon as possible.
+                self._ping_async_list(async_list)
+
+        while done < n:
+            self._semaphore.acquire()
+            done += 1
+            self._ping_async_list(async_list)
+
+        return self.results
 
 
 def thread_pool_map(thread_pool, f, arglist):
@@ -474,26 +516,4 @@ def thread_pool_map(thread_pool, f, arglist):
         return []
     if n == 1:
         return [f(arglist[0])]
-    task = __ThreadPoolTask(f, arglist)
-
-    async_list = [thread_pool.apply_async(task.run_in_thread)
-                  for _ in range(min(os.cpu_count(), n) - 1)]
-    task.run()
-
-    # Because task.run() has completed, we're certain that the pending
-    # list is empty, but possibly not all results have been filled in.
-    # We periodically ping all async results so that exceptions are propagated.
-
-    # Don't use task.empty in task.results here -- __eq__ may be overriden
-    while any(res is task.empty for res in task.results):
-        for i in range(len(async_list) - 1, -1, -1):
-            async_obj = async_list[i]
-            if async_obj.ready():
-                async_obj.get()
-                del async_list[i]
-        time.sleep(0.01)
-
-    # Now all results are successful.  Now we don't really have to wait for
-    # the async results.  We're certain they have thrown no exception, and
-    # they are actually not necessarily ready.
-    return task.results
+    return __ThreadPoolTask(f, arglist).run_and_wait_all(thread_pool)
