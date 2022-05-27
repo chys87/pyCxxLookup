@@ -34,6 +34,7 @@
 
 import threading
 
+cimport cython
 from libc.stdint cimport int64_t, uint64_t
 
 from . import cutils
@@ -80,37 +81,26 @@ def type_max(int type_) -> int:
     return (2ull << (type_ - 1)) - 1
 
 
-class ExprMeta(type):
-    """This is for performance purpose.
+class Expr:
+    IS_ADD = False
+    IS_ALSO = False
+    IS_AND = False
+    IS_BINARY = False
+    IS_CAST = False
+    IS_COMPARE = False
+    IS_COND = False
+    IS_CONST = False
+    IS_DIV = False
+    IS_FIXEDVAR = False
+    IS_LSHIFT = False
+    IS_MOD = False
+    IS_MUL = False
+    IS_RSHIFT = False
+    IS_SHIFT = False
+    IS_TABLE = False
+    IS_TEMPVAR = False
+    IS_VAR = False
 
-    Add IS_*** constants to Expr* classes to replace ininstance,
-    which turned out to be one of the bottlenecks of pyCxxLookup
-
-    >>> Expr.IS_CONST, Expr.IS_VAR, Expr.IS_RSHIFT
-    (False, False, False)
-    >>> ExprConst.IS_CONST, ExprConst.IS_VAR, ExprConst.IS_RSHIFT
-    (True, False, False)
-    >>> ExprVar.IS_CONST, ExprVar.IS_VAR, ExprVar.IS_RSHIFT
-    (False, True, False)
-    >>> ExprRShift.IS_CONST, ExprRShift.IS_VAR, ExprRShift.IS_RSHIFT
-    (False, False, True)
-    """
-    def __new__(cls, name, bases, namespace, **kwds):
-        result = type.__new__(cls, name, bases, dict(namespace))
-        if name != 'Expr' and name.startswith('Expr'):
-            is_name = 'IS_' + name[4:].upper()
-            setattr(result, is_name, True)
-            setattr(Expr, is_name, False)
-
-        for extra_name in result.__dict__.get('IS_ALSO', ()):
-            is_name = 'IS_' + extra_name
-            setattr(result, is_name, True)
-            setattr(Expr, is_name, False)
-
-        return result
-
-
-class Expr(metaclass=ExprMeta):
     def __str__(self):
         raise NotImplementedError
 
@@ -239,6 +229,8 @@ class Expr(metaclass=ExprMeta):
 
 
 class ExprVar(Expr):
+    IS_VAR = True
+
     def __init__(self, type):
         super().__init__()
         self.rtype = type
@@ -248,6 +240,8 @@ class ExprVar(Expr):
 
 
 class ExprFixedVar(ExprVar):
+    IS_FIXEDVAR = True
+
     def __init__(self, type, name):
         super().__init__(type)
         self.name = name
@@ -257,6 +251,7 @@ class ExprFixedVar(ExprVar):
 
 
 class ExprTempVar(ExprVar):
+    IS_TEMPVAR = True
     _name_cache = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ')
 
     def __init__(self, type, var):
@@ -299,6 +294,7 @@ class ExprTempVar(ExprVar):
 
 
 class ExprConst(Expr):
+    IS_CONST = True
     _POOL_SIZE = 4096
     _pool = [None] * _POOL_SIZE
     _pool_lock = threading.Lock()
@@ -379,6 +375,8 @@ class ExprConst(Expr):
 
 
 class ExprAdd(Expr):
+    IS_ADD = True
+
     def __init__(self, exprs, const_):
         super().__init__()
         assert const_ is None or const_.IS_CONST
@@ -416,6 +414,8 @@ class ExprAdd(Expr):
             return self.exprs
 
     @cutils.cached_property
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
     def optimized(self):
         exprs = []
         const_exprs = []
@@ -453,11 +453,21 @@ class ExprAdd(Expr):
         if len(exprs) == 1 and not const_:
             return exprs[0]
 
-        if const_ is self.const and len(exprs) == len(self.exprs) and \
-                list(map(id, exprs)) == list(map(id, self.exprs)):
-            return self
-        else:
-            return ExprAdd(exprs, const_).force_optimized
+        cdef Py_ssize_t n_exprs
+        cdef Py_ssize_t j
+        if const_ is self.const:
+            self_exprs = self.exprs
+            n_exprs = len(exprs)
+            if n_exprs == len(self_exprs):
+                for j in range(n_exprs):
+                    if exprs[j] is self_exprs[j]:
+                        pass
+                    else:
+                        break
+                else:
+                    return self
+
+        return ExprAdd(exprs, const_).force_optimized
 
     def extract_subexprs(self, threshold, callback, allow_extract_table):
         exprs = []
@@ -478,6 +488,8 @@ class ExprAdd(Expr):
 
 
 class ExprBinary(Expr):
+    IS_BINARY = True
+
     def __init__(self, left, right, rtype=None):
         super().__init__()
         self.left = left = left.optimized
@@ -499,11 +511,15 @@ class ExprBinary(Expr):
 
 
 class ExprShift(ExprBinary):
+    IS_SHIFT = True
+
     def __init__(self, left, right):
         super().__init__(left, right, max(31, left.rtype))
 
 
 class ExprLShift(ExprShift):
+    IS_LSHIFT = True
+
     def __str__(self):
         # Avoid the spurious 'u' after the constant
         right = self.right
@@ -583,6 +599,8 @@ class ExprLShift(ExprShift):
 
 
 class ExprRShift(ExprShift):
+    IS_RSHIFT = True
+
     def __init__(self, left, right):
         # Always logical shift
         if left.rtype < 32 or left.rtype == 63:
@@ -646,6 +664,8 @@ class ExprRShift(ExprShift):
 
 
 class ExprMul(ExprBinary):
+    IS_MUL = True
+
     def __str__(self):
         left = self.left
         right = self.right
@@ -710,7 +730,7 @@ class ExprMul(ExprBinary):
 
 
 class ExprDiv(ExprBinary):
-    IS_ALSO = 'DIV_MOD',
+    IS_DIV = True
 
     def __init__(self, left, right):
         if left.rtype < 32 or left.rtype == 63:
@@ -745,7 +765,7 @@ class ExprDiv(ExprBinary):
 
 
 class ExprMod(ExprBinary):
-    IS_ALSO = 'DIV_MOD',
+    IS_MOD = True
 
     def __str__(self):
         left = self.left
@@ -769,6 +789,8 @@ class ExprMod(ExprBinary):
 
 
 class ExprAnd(ExprBinary):
+    IS_AND = True
+
     def __str__(self):
         left = self.left
         right = self.right
@@ -840,6 +862,8 @@ class ExprAnd(ExprBinary):
 
 
 class ExprCompare(ExprBinary):
+    IS_COMPARE = True
+
     __negate = {
         '==': '!=',
         '!=': '==',
@@ -903,6 +927,8 @@ class ExprCompare(ExprBinary):
 
 
 class ExprCast(Expr):
+    IS_CAST = True
+
     def __init__(self, type, value):
         super().__init__()
         self.rtype = type
@@ -942,6 +968,8 @@ class ExprCast(Expr):
 
 
 class ExprCond(Expr):
+    IS_COND = True
+
     def __init__(self, cond, exprT, exprF):
         super().__init__()
         self.cond = cond.optimized
@@ -1019,6 +1047,7 @@ class ExprCond(Expr):
 
 
 class ExprTable(Expr):
+    IS_TABLE = True
     has_table = True
 
     def __init__(self, type, name, values, var, offset):
@@ -1124,13 +1153,12 @@ class ExprTable(Expr):
 
 
 ### Factory functions
-def exprize(expr, *,
-            isinstance=isinstance, Expr=Expr, ExprConst=ExprConst):
+cdef exprize(expr):
     '''Convert int to ExprConst'''
     if isinstance(expr, Expr):
         return expr
     else:
-        return Const(32, expr)
+        return ExprConst(32, expr)
 
 
 FixedVar = ExprFixedVar

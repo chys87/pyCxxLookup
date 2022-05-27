@@ -612,6 +612,28 @@ cdef _gen_lo_hi(uint32_t lo, values, uint32_t num, uint32_t uniq,
     return res
 
 
+cdef _gen_two_level_lookup(values, uniqs, uint32_t uniq, uint32_t lo,
+                           str table_name,
+                           inexpr, inexpr_long, inexpr_base0, int addition,
+                           int maxdepth, _make_code, _yield_code):
+    indices = np.searchsorted(uniqs, values)
+    # Level 1
+    expr = _make_code(lo, indices, table_name + '_index',
+                      inexpr, inexpr_long, inexpr_base0,
+                      uniqs=np.arange(uniq, dtype=np.uint32),
+                      maxdepth=maxdepth-1)
+
+    if <uint32_t>expr.rtype % 8 != 0:
+        # Signed return type - convert to unsigned, becuase inexpr
+        # of _yield_code must be unsigned
+        expr = Cast(32, expr)
+
+    # Level 2
+    return _yield_code(0, uniqs, table_name + '_value',
+                       expr, expr,
+                       addition=addition, uniqs=uniqs, maxdepth=maxdepth-1)
+
+
 class MakeCodeForRange:
     def __init__(self, lo, values, table_name, opt, thread_pool):
         self._lo = lo
@@ -702,9 +724,6 @@ class MakeCodeForRange:
         """
         Everything in values must be non-negative; addition may be negative.
         The final result has type uint32_t even if it may be negative.
-
-        Yield:
-            instances of some subclass of Expr
         """
         res = []
 
@@ -858,24 +877,10 @@ class MakeCodeForRange:
 
         # Two-level lookup?
         if maxv > num > uniq * 4 // 3 and maxdepth > 0:
-            indices = np.searchsorted(uniqs, values)
-            # Level 1
-            expr = self._make_code(lo, indices, table_name + '_index',
-                                   inexpr, inexpr_long, inexpr_base0,
-                                   uniqs=np.arange(uniq, dtype=np.uint32),
-                                   maxdepth=maxdepth-1)
-
-            if expr.rtype % 8 != 0:
-                # Signed return type - convert to unsigned, becuase inexpr
-                # of _yield_code must be unsigned
-                expr = Cast(32, expr)
-
-            # Level 2
-            res.extend(self._yield_code(0, uniqs, table_name + '_value',
-                                        expr, expr,
-                                        addition=addition,
-                                        uniqs=uniqs,
-                                        maxdepth=maxdepth-1))
+            res.extend(_gen_two_level_lookup(
+                values, uniqs, uniq, lo, table_name, inexpr, inexpr_long,
+                inexpr_base0, addition, maxdepth,
+                self._make_code, self._yield_code))
 
         # Try using "compressed" table. 2->1
         expr = _gen_compressed(lo, values, num, uniq, maxv, maxv_bits, inexpr,
