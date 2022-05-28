@@ -49,21 +49,22 @@ def main():
         os.environ.setdefault('CFLAGS', DEFAULT_CFLAGS)
         os.environ.setdefault('CXXFLAGS', DEFAULT_CFLAGS + ' -std=gnu++20')
 
+        has_ccache = bool(shutil.which('ccache'))
         if shutil.which('clang++') and shutil.which('clang'):
-            os.environ['CC'] = 'clang'
-            os.environ['CXX'] = 'clang++'
+            os.environ['CC'] = 'ccache clang' if has_ccache else 'clang'
+            os.environ['CXX'] = 'ccache clang++' if has_ccache else 'clang++'
             os.environ['LDSHARED'] = 'clang++ -shared'
 
 
     ext_modules = [
-        Extension('_speedups', ['cxxlookup/_speedups.cpp'],
+        Extension('cxxlookup._speedups', ['cxxlookup/_speedups.cpp'],
                   include_dirs=[np.get_include()],
                   libraries=['absl_raw_hash_set', 'absl_hash']),
-        Extension('cutils', ['cxxlookup/cutils.pyx'],
+        Extension('cxxlookup.cutils', ['cxxlookup/cutils.pyx'],
                   libraries=['absl_raw_hash_set', 'absl_hash']),
-        Extension('expr', ['cxxlookup/expr.pyx'],
+        Extension('cxxlookup.expr', ['cxxlookup/expr.pyx'],
                   libraries=['absl_raw_hash_set', 'absl_hash']),
-        Extension('codegen', ['cxxlookup/codegen.pyx'],
+        Extension('cxxlookup.codegen', ['cxxlookup/codegen.pyx'],
                   libraries=['absl_raw_hash_set', 'absl_hash']),
     ]
 
@@ -75,7 +76,6 @@ def main():
           license='BSD',
           description='Generate C++ lookup functions with Python 3.',
           packages=['cxxlookup'],
-          ext_package='cxxlookup',
           ext_modules=cythonize(ext_modules,
                                 language_level=3,
                                 # Don't build in tree

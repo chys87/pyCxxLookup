@@ -33,25 +33,12 @@
 
 cimport cython
 from cpython.ref cimport PyObject
-from libc.stdint cimport uintptr_t, uint32_t
+from libc.stdint cimport int64_t, uintptr_t, uint32_t
+from libcpp cimport bool as c_bool
+from libcpp.utility cimport move as std_move
 from libcpp.vector cimport vector
 
-from cxxlookup.pyx_helpers cimport flat_hash_set
-
-
-def is_pow2(x) -> bool:
-    '''Test whether v is a power of 2
-    >>> is_pow2(0)
-    False
-    >>> is_pow2(1)
-    True
-    >>> is_pow2(2)
-    True
-    >>> is_pow2(3)
-    False
-    '''
-    cdef long long v = x
-    return v > 0 and not (v & (v - 1))
+from .pyx_helpers cimport flat_hash_set
 
 
 def walk(node):
@@ -109,6 +96,31 @@ def walk_dedup(node):
                 q.push_back(nodep)
 
 
+cdef vector[PyObject*] walk_dedup_fast(node):
+    '''A faster version of walk_dedup, returns vector[PyObject*]
+    '''
+    cdef PyObject* nodep
+    cdef flat_hash_set[PyObject*] visited
+    cdef vector[PyObject*] q
+    cdef vector[PyObject*] res
+
+    nodep = <PyObject*>node
+    q.push_back(nodep)
+    visited.insert(nodep)
+
+    while not q.empty():
+        nodep = q.back()
+        q.pop_back()
+        res.push_back(nodep)
+        for child in (<object>nodep).children:
+            nodep = <PyObject*>(child)
+            if not visited.contains(nodep):
+                visited.insert(nodep)
+                q.push_back(nodep)
+
+    return std_move(res)
+
+
 class cached_property:
     '''
     >>> class Test:
@@ -143,7 +155,28 @@ class cached_property:
 @cython.wraparound(False)
 @cython.nonecheck(False)
 @cython.cdivision(True)
-def linregress_slope(uint32_t[::1] y) -> float:
+@cython.profile(False)
+cdef inline float linregress_slope_internal(uint32_t[::1] y, int n) nogil:
+    #          sigma (y_i - y_bar)(x_i - x_bar)
+    # slope = ---------------------------------
+    #           sigma (x_i - x_bar)^2
+    #
+    #          sigma  y_i (x_i - x_bar)
+    #       = ---------------------------
+    #          sigma x_i^2 - n * x_bar^2
+    #
+    # because x_i = i, so denominator = n(n^2-1)/12
+
+    cdef int i
+    cdef float x_bar = (n - 1) * <float>.5
+    cdef float a = 0
+    for i in range(n):
+        a += y[i] * (i - x_bar)
+    return 12 * a / (n * (n * n - 1))
+
+
+@cython.nonecheck(False)
+cdef float linregress_slope(uint32_t[::1] y):
     '''Compute linear regression slope
 
     Roughly equivalent to
@@ -159,37 +192,12 @@ def linregress_slope(uint32_t[::1] y) -> float:
     >>> round(linregress_slope(np.arange(100, dtype=np.uint32) // 2), 3)
     0.5
     '''
-    #          sigma (y_i - y_bar)(x_i - x_bar)
-    # slope = ---------------------------------
-    #           sigma (x_i - x_bar)^2
-    #
-    #          sigma  y_i (x_i - x_bar)
-    #       = ---------------------------
-    #          sigma x_i^2 - n * x_bar^2
-    #
-    # because x_i = i, so denominator = n(n^2-1)/12
-
     cdef int n = len(y)
-    cdef float x_bar
-
-    cdef float a
-    cdef int i
-    cdef float res = 0
 
     if n < 128:
-        if n >= 2:
-            x_bar = (n - 1) * <float>.5
-            a = 0
-            for i in range(n):
-                a += y[i] * (i - x_bar)
-            res = 12 * a / (n * (n * n - 1))
-
+        if n < 2:
+            return 0
+        return linregress_slope_internal(y, n)
     else:
         with nogil:
-            x_bar = (n - 1) * <float>.5
-            a = 0
-            for i in range(n):
-                a += y[i] * (i - x_bar)
-            res = 12 * a / (n * (n * n - 1))
-
-    return res
+            return linregress_slope_internal(y, n)

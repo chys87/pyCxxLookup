@@ -41,6 +41,8 @@ from . import cutils
 from . import utils
 from . import _speedups
 
+from .cutils cimport is_pow2
+
 
 # Signed types only allowed for intermediate values
 # Unsigned: Number of bits
@@ -696,7 +698,7 @@ class ExprMul(ExprBinary):
                 return Const(32, 0)
             elif rv == 1:
                 return left
-            elif cutils.is_pow2(rv):
+            elif is_pow2(rv):
                 expr = ExprLShift(left, Const(32, rv.bit_length() - 1))
                 return expr.optimized
 
@@ -755,7 +757,7 @@ class ExprDiv(ExprBinary):
                 raise ZeroDivisionError
             elif rv == 1:
                 return left
-            elif cutils.is_pow2(rv):
+            elif is_pow2(rv):
                 expr = ExprRShift(left, Const(32, rv.bit_length() - 1))
                 return expr.optimized
 

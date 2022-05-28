@@ -43,7 +43,6 @@ from . import cutils
 from . import _speedups
 
 
-is_pow2 = cutils.is_pow2
 cached_property = cutils.cached_property
 
 

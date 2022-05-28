@@ -52,8 +52,11 @@ cimport cython
 from cpython.ref cimport PyObject
 from libc.stdint cimport int32_t, uint32_t, int64_t, uint64_t
 from libcpp cimport bool as c_bool
+from libcpp.utility cimport move as std_move, pair
+from libcpp.vector cimport vector
 
-from cxxlookup.pyx_helpers cimport bit_length, flat_hash_set
+from .cutils cimport linregress_slope, walk_dedup_fast
+from .pyx_helpers cimport bit_length, flat_hash_set
 
 
 COMMON_HEADERS = r'''#include <stdint.h>
@@ -203,10 +206,13 @@ cdef int64_t _overhead(expr: Expr, opt):
     """
     cdef unsigned int total_bytes = 0
     cdef unsigned int extra = 0
+    cdef PyObject* nodep
 
-    for x in cutils.walk_dedup(expr):
-        extra += x.overhead
-        total_bytes += x.static_bytes
+    cdef vector[PyObject*] walk_list = walk_dedup_fast(expr)
+    for nodep in walk_list:
+        x = <object>nodep
+        extra += <unsigned int>x.overhead
+        total_bytes += <unsigned int>x.static_bytes
 
     return total_bytes + extra * <int64_t>opt.overhead_multiply
 
@@ -351,25 +357,28 @@ cdef _gen_pack_as_64_code(uint32_t[:] values, inexpr_base0,
     return expr
 
 
-cdef _gen_possible_slopes(np_values):
+ctypedef pair[int32_t, uint32_t] SlopePair
+cdef vector[SlopePair] _gen_possible_slopes(np_values):
     '''Is values almost linear?
     Return likely slopes list[(numerator, denominator), ...]
+    Returned list is ordered by denominator from smallest to biggest
     '''
     cdef uint32_t[::1] values = np_values
     cdef uint32_t num = len(values)
 
-    res = set()
+    cdef vector[SlopePair] res
 
     # Most common adjacent differences.
     # The remainder array will have many equal values
     slope, slope_count = utils.most_common_element_count(
                 utils.slope_array(np_values, np.int64))
-    if slope and <uint32_t>slope_count * 3 >= num:
-        res.add((slope, 1))
+    if slope and -0x7fffffff <= slope <= 0x80000000 and \
+            <uint32_t>slope_count * 3 >= num:
+        res.push_back(SlopePair(slope, 1))
 
     # Linear regression
-    slope = cutils.linregress_slope(np_values)
-    slope_frac = Fraction(slope)
+    cdef float slope_linregress = linregress_slope(np_values)
+    slope_frac = Fraction(slope_linregress)
 
     cdef uint32_t last_denominator = 0
     cdef uint32_t max_denominator
@@ -382,17 +391,18 @@ cdef _gen_possible_slopes(np_values):
                       Fraction(int(slope * max_denominator), max_denominator)):
             numerator = slope.numerator
             denominator = slope.denominator
-            if numerator > 0 and denominator > last_denominator and \
+            if numerator != 0 and denominator > last_denominator and \
                     -0x80000000 <= numerator * (num - 1) <= 0x7fffffff:
                 last_denominator = denominator
-                res.add((numerator, denominator))
+                res.push_back(SlopePair(<int32_t>numerator,
+                                        <uint32_t>denominator))
 
         # If slope_limited is already very close to the real slope,
         # don't try more
-        if abs(float(slope_limited) - float(slope_frac)) * num <= 1:
+        if abs(<float>float(slope_limited) - slope_linregress) * num <= 1:
             break
 
-    return res
+    return std_move(res)
 
 
 cdef _prepare_almost_linear_tasks(values, uint32_t num, uint32_t uniq,
@@ -404,11 +414,16 @@ cdef _prepare_almost_linear_tasks(values, uint32_t num, uint32_t uniq,
     cdef uint32_t reduced_uniq
     cdef uint32_t reduced_maxv_bits
 
-    slopes = sorted(_gen_possible_slopes(values), key=lambda x: x[1])
+    cdef vector[SlopePair] slopes = _gen_possible_slopes(values)
 
     linear_tasks = []
 
-    for slope_num, slope_denom in slopes:
+    cdef SlopePair slope_pair
+    # cdef int32_t slope_num
+    # cdef uint32_t slope_denom
+    for slope_pair in slopes:
+        slope_num = slope_pair.first
+        slope_denom = slope_pair.second
         reduced_values = values - \
             np.arange(0, slope_num * num, slope_num, dtype=np.int64) \
             // slope_denom
@@ -702,13 +717,14 @@ class MakeCodeForRange:
     def _make_code(self, lo, values, table_name, inexpr, inexpr_long=None,
                    inexpr_base0=None, int addition=0, *, int maxdepth,
                    **kwargs):
-        exprs = (expr.optimized for expr in
-                 self._yield_code(lo, values, table_name, inexpr,
-                                  inexpr_long, inexpr_base0, addition=addition,
-                                  maxdepth=maxdepth, **kwargs))
+        exprs = self._yield_code(lo, values, table_name, inexpr,
+                                 inexpr_long, inexpr_base0, addition=addition,
+                                 maxdepth=maxdepth, **kwargs)
         min_expr = None
         cdef int64_t min_overhead = 0
+        cdef int64_t overhead
         for expr in exprs:
+            expr = expr.optimized
             overhead = _overhead(expr, self._opt)
             if min_expr is None or overhead < min_overhead:
                 min_expr = expr
