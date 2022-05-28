@@ -240,16 +240,20 @@ cdef _gen_uniq2_code(values, uint32_t[::1] uniqs, uint32_t num, inexpr,
 
     cdef uint32_t k = utils.const_range(values)
     cdef uint32_t rk = utils.const_range(values[::-1])
+    cdef uint32_t v0
+    cdef uint32_t vlast
     if k + rk == num:  # [a,...,a,b,...,b]
+        v0 = values[0]
+        vlast = values[-1]
         if k == 1:
-            return Cond(inexpr == lo, values[0] + addition,
-                        values[-1] + addition)
+            return Cond(inexpr == lo, v0 + addition,
+                        vlast + addition)
         elif rk == 1:
-            return Cond(inexpr == lo + k, values[-1] + addition,
-                        values[0] + addition)
+            return Cond(inexpr == lo + k, vlast + addition,
+                        v0 + addition)
         else:
-            return Cond(inexpr < lo + k, values[0] + addition,
-                        values[-1] + addition)
+            return Cond(inexpr < lo + k, v0 + addition,
+                        vlast + addition)
 
     elif values[0] == values[-1] and utils.is_const(values[k:num-rk]):
         # [a, ..., a, b, ..., b, a, ..., a]
@@ -259,7 +263,8 @@ cdef _gen_uniq2_code(values, uint32_t[::1] uniqs, uint32_t num, inexpr,
         else:
             subinexpr = Cast(32, inexpr - (lo + k))
             cond = (subinexpr < bcount)
-        return Cond(cond, values[k] + addition, values[0] + addition)
+        return Cond(cond, <uint32_t>values[k] + addition,
+                    <uint32_t>values[0] + addition)
 
     elif num <= 64:
         # Use bit test.

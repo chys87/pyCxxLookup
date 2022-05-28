@@ -93,15 +93,19 @@ class Expr:
     IS_COND = False
     IS_CONST = False
     IS_DIV = False
-    IS_FIXEDVAR = False
     IS_LSHIFT = False
     IS_MOD = False
     IS_MUL = False
     IS_RSHIFT = False
     IS_SHIFT = False
-    IS_TABLE = False
     IS_TEMPVAR = False
     IS_VAR = False
+    __slots__ = '__has_table',
+
+    def __new__(cls, *args, **kwargs):
+        self = super(Expr, cls).__new__(cls)
+        self.__has_table = None
+        return self
 
     def __str__(self):
         raise NotImplementedError
@@ -149,12 +153,19 @@ class Expr:
                 return True
         return False
 
-    @cutils.cached_property
     def has_table(self):
         '''Recursively checks whether the expression contains ExprTable.
         If true, the expression can be unsafe to extract in ExprCond
         '''
-        return any(expr.has_table for expr in self.children)
+        res = self.__has_table
+        if res is None:
+            res = False
+            for expr in self.children:
+                if expr.has_table:
+                    res = True
+                    break
+            self.__has_table = res
+        return res
 
     def extract_subexprs(self, threshold, callback, allow_extract_table):
         for subexpr in self.children:
@@ -242,8 +253,6 @@ class ExprVar(Expr):
 
 
 class ExprFixedVar(ExprVar):
-    IS_FIXEDVAR = True
-
     def __init__(self, type, name):
         super().__init__(type)
         self.name = name
@@ -300,6 +309,7 @@ class ExprConst(Expr):
     _POOL_SIZE = 4096
     _pool = [None] * _POOL_SIZE
     _pool_lock = threading.Lock()
+    __slots__ = 'optimized', 'rtype', 'value'
 
     def __new__(cls, int type, value):
         if type == 32 and 0 <= value < cls._POOL_SIZE:
@@ -312,15 +322,14 @@ class ExprConst(Expr):
                         super(ExprConst, self).__init__()
                         self.rtype = type
                         self.value = int(value)
-                        self.__dict__['optimized'] = self
+                        self.optimized = self
                         cls._pool[value] = self
             return self
 
         self = super(ExprConst, cls).__new__(cls)
-        super(ExprConst, self).__init__()
         self.rtype = type
         self.value = int(value)
-        self.__dict__['optimized'] = self
+        self.optimized = self
         return self
 
     def __str(self, omit_type=False):
@@ -371,7 +380,7 @@ class ExprConst(Expr):
     def _complicated(self, threshold):
         return False
 
-    @cutils.cached_property
+    @property
     def overhead(self):
         return (<int>self.rtype > 32) + 1
 
@@ -930,11 +939,14 @@ class ExprCompare(ExprBinary):
 
 class ExprCast(Expr):
     IS_CAST = True
+    __slots__ = 'rtype', 'value', '__optimized'
 
-    def __init__(self, type, value):
-        super().__init__()
+    def __new__(cls, type, value):
+        self = super(ExprCast, cls).__new__(cls)
         self.rtype = type
         self.value = value.optimized
+        self.__optimized = None
+        return self
 
     def __str__(self):
         return '{}({})'.format(type_name(self.rtype),
@@ -944,25 +956,29 @@ class ExprCast(Expr):
     def children(self):
         return self.value,
 
-    @cutils.cached_property
+    @property
     def optimized(self):
-        rtype = self.rtype
-        value = self.value
+        res = self.__optimized
+        if res is None:
+            rtype = self.rtype
+            value = self.value
 
-        if value.rtype == rtype:
-            return value
+            if value.rtype == rtype:
+                res = value
+            elif value.IS_CAST and rtype <= value.rtype:
+                res = ExprCast(rtype, value.value).optimized
+            else:
+                res = self
 
-        if value.IS_CAST and rtype <= value.rtype:
-            return ExprCast(rtype, value.value).optimized
-
-        return self
+            self.__optimized = res
+        return res
 
     def extract_subexprs(self, threshold, callback, allow_extract_table):
         super().extract_subexprs(threshold, callback, allow_extract_table)
         self.value = callback(self.value, allow_extract_table,
                               self.value._complicated(threshold))
 
-    @cutils.cached_property
+    @property
     def is_predicate(self):
         return self.value.is_predicate
 
@@ -1049,16 +1065,18 @@ class ExprCond(Expr):
 
 
 class ExprTable(Expr):
-    IS_TABLE = True
     has_table = True
+    __slots__ = 'rtype', 'name', 'values', 'var', 'offset', '__optimized'
 
-    def __init__(self, type, name, values, var, offset):
-        super().__init__()
+    def __new__(cls, type, name, values, var, offset):
+        self = super(ExprTable, cls).__new__(cls)
         self.rtype = type
         self.name = name
         self.values = values
-        self.var = var = var.optimized
+        self.var = var.optimized
         self.offset = offset
+        self.__optimized = None
+        return self
 
     def __str__(self):
         if self.offset > 0:
@@ -1119,8 +1137,14 @@ class ExprTable(Expr):
     def children(self):
         return self.var,
 
-    @cutils.cached_property
+    @property
     def optimized(self):
+        res = self.__optimized
+        if res is None:
+            self.__optimized = res = self.__optimized_impl()
+        return res
+
+    def __optimized_impl(self):
         var = self.var
         # If var contains a cast, it's usually unnecessary
         while var.IS_CAST and var.value.rtype < var.rtype:
@@ -1149,18 +1173,19 @@ class ExprTable(Expr):
     # Bytes taken by the table is independently calculated
     overhead = 2
 
-    @cutils.cached_property
+    @property
     def static_bytes(self):
         return self.values.size * type_bytes(self.rtype)
 
 
 ### Factory functions
+@cython.nonecheck(False)
 cdef exprize(expr):
     '''Convert int to ExprConst'''
-    if isinstance(expr, Expr):
-        return expr
-    else:
+    if type(expr) is int:
         return ExprConst(32, expr)
+    else:
+        return expr
 
 
 FixedVar = ExprFixedVar
