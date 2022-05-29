@@ -306,22 +306,23 @@ class ExprTempVar(ExprVar):
         return self.get_name(self.var)
 
 
+DEF CONST_POOL_SIZE = 4096
+
+
 class ExprConst(Expr):
     IS_CONST = True
-    _POOL_SIZE = 4096
-    _pool = [None] * _POOL_SIZE
+    _pool = [None] * CONST_POOL_SIZE
     _pool_lock = threading.Lock()
     __slots__ = 'optimized', 'rtype', 'value'
 
-    def __new__(cls, int type, value):
-        if type == 32 and 0 <= value < cls._POOL_SIZE:
+    def __new__(cls, uint32_t type, value):
+        if type == 32 and 0 <= value < CONST_POOL_SIZE:
             self = cls._pool[value]
             if self is None:
                 with cls._pool_lock:
                     self = cls._pool[value]
                     if self is None:
                         self = super(ExprConst, cls).__new__(cls)
-                        super(ExprConst, self).__init__()
                         self.rtype = type
                         self.value = int(value)
                         self.optimized = self
