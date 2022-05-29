@@ -87,9 +87,7 @@ cdef uint64_t type_max(uint32_t type) nogil:
 
 class Expr:
     IS_ADD = False
-    IS_ALSO = False
     IS_AND = False
-    IS_BINARY = False
     IS_CAST = False
     IS_COMPARE = False
     IS_COND = False
@@ -97,9 +95,7 @@ class Expr:
     IS_DIV = False
     IS_LSHIFT = False
     IS_MOD = False
-    IS_MUL = False
     IS_RSHIFT = False
-    IS_SHIFT = False
     IS_TEMPVAR = False
     IS_VAR = False
     __slots__ = '__has_table',
@@ -394,7 +390,7 @@ class ExprAdd(Expr):
     def __init__(self, exprs, const_):
         super().__init__()
         assert const_ is None or const_.IS_CONST
-        self.exprs = tuple(expr.optimized for expr in exprs)
+        self.exprs = tuple([expr.optimized for expr in exprs])
         self.const = const_
         rtype = max([x.rtype for x in self.children])
         self.rtype = max(rtype, 31)  # C type-promotion rule
@@ -502,8 +498,6 @@ class ExprAdd(Expr):
 
 
 class ExprBinary(Expr):
-    IS_BINARY = True
-
     def __init__(self, left, right, rtype=None):
         super().__init__()
         self.left = left = left.optimized
@@ -525,8 +519,6 @@ class ExprBinary(Expr):
 
 
 class ExprShift(ExprBinary):
-    IS_SHIFT = True
-
     def __init__(self, left, right):
         super().__init__(left, right, max(31, left.rtype))
 
@@ -678,8 +670,6 @@ class ExprRShift(ExprShift):
 
 
 class ExprMul(ExprBinary):
-    IS_MUL = True
-
     def __str__(self):
         left = self.left
         right = self.right
