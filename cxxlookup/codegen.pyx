@@ -56,6 +56,7 @@ from libcpp.utility cimport move as std_move, pair
 from libcpp.vector cimport vector
 
 from .cutils cimport linregress_slope, walk_dedup_fast
+from .expr cimport const_type, type_max, type_name
 from .pyx_helpers cimport bit_length, flat_hash_set
 
 

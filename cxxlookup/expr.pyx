@@ -35,7 +35,7 @@
 import threading
 
 cimport cython
-from libc.stdint cimport int64_t, uint64_t
+from libc.stdint cimport int64_t, uint32_t, uint64_t
 
 from . import cutils
 from . import utils
@@ -48,18 +48,18 @@ from .cutils cimport is_pow2
 # Unsigned: Number of bits
 # Signed: Number of bits - 1
 # E.g.: 31 = int32_t; 32 = uint32_t
-def type_name(type):
+cdef str type_name(uint32_t type):
     '''
     >>> type_name(7), type_name(32)
     ('int8_t', 'uint32_t')
     '''
     if (type & 1):
-        return 'int{}_t'.format(type + 1)
+        return f'int{type + 1}_t'
     else:
-        return 'uint{}_t'.format(type)
+        return f'uint{type}_t'
 
 
-def type_bytes(int type_):
+cdef uint32_t type_bytes(uint32_t type_) nogil:
     '''
     >>> list(map(type_bytes, [7, 8, 15, 16, 31, 32, 63, 64]))
     [1, 1, 2, 2, 4, 4, 8, 8]
@@ -67,20 +67,20 @@ def type_bytes(int type_):
     return (type_ + 7) // 8
 
 
-def const_type(uint64_t value) -> int:
-    if value >= 2**16:
-        if value >= 2**32:
+cdef uint32_t const_type(uint64_t value) nogil:
+    if value >= (1ull << 16):
+        if value >= (1ull << 32):
             return 64
         else:
             return 32
-    elif value >= 2**8:
+    elif value >= (1ull << 8):
         return 16
     else:
         return 8
 
 
-def type_max(int type_) -> int:
-    return (2ull << (type_ - 1)) - 1
+cdef uint64_t type_max(uint32_t type) nogil:
+    return (2ull << (type - 1)) - 1
 
 
 class Expr:
