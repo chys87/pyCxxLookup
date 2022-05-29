@@ -1018,18 +1018,14 @@ class ExprCond(Expr):
         exprT = self.exprT
         exprF = self.exprF
 
-        # cast(a cmp b) ? T : F ==> (a cmp b) ? T : F
-        # cast(a & 1) ? T : F ==> (a & 1) ? T : F
-        while cond.IS_CAST and \
-                (cond.value.IS_COMPARE or
-                 (cond.value.IS_AND and cond.value.right.IS_CONST and
-                  cond.value.right.value == 1)):
+        # cast(PREDICATE) ? T : F ==> (PREDICATE) ? T : F
+        while cond.IS_CAST and cond.value.is_predicate:
             cond = cond.value
         if cond is not self.cond:
             return ExprCond(cond, exprT, exprF).optimized
 
-        # cond ? 1 : 0 ==> Cast(cond)
-        if (cond.IS_COMPARE and exprT.IS_CONST and exprF.IS_CONST and
+        # PREDICATE ? 1 : 0 ==> Cast(PREDICATE)
+        if (cond.is_predicate and exprT.IS_CONST and exprF.IS_CONST and
                 exprT.value == 1 and exprF.value == 0):
             return ExprCast(self.rtype, cond).optimized
 
