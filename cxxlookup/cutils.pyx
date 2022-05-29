@@ -97,26 +97,26 @@ def walk_dedup(node):
 
 
 cdef vector[PyObject*] walk_dedup_fast(node):
-    '''A faster version of walk_dedup, returns vector[PyObject*]
+    '''A faster version of walk_dedup, returning vector[PyObject*]
     '''
     cdef PyObject* nodep
     cdef flat_hash_set[PyObject*] visited
-    cdef vector[PyObject*] q
     cdef vector[PyObject*] res
 
     nodep = <PyObject*>node
-    q.push_back(nodep)
+    res.push_back(nodep)
     visited.insert(nodep)
 
-    while not q.empty():
-        nodep = q.back()
-        q.pop_back()
-        res.push_back(nodep)
+    cdef size_t i = 0
+
+    while i < res.size():
+        nodep = res[i]
+        i += 1
         for child in (<object>nodep).children:
             nodep = <PyObject*>(child)
             if not visited.contains(nodep):
                 visited.insert(nodep)
-                q.push_back(nodep)
+                res.push_back(nodep)
 
     return std_move(res)
 
