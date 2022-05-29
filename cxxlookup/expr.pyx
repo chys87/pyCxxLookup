@@ -35,13 +35,15 @@
 import threading
 
 cimport cython
+from cpython.ref cimport PyObject
 from libc.stdint cimport int64_t, uint32_t, uint64_t
+from libcpp.vector cimport vector
 
 from . import cutils
 from . import utils
 from . import _speedups
 
-from .cutils cimport is_pow2
+from .cutils cimport is_pow2, walk_dedup_fast
 
 
 # Signed types only allowed for intermediate values
@@ -137,21 +139,21 @@ class Expr:
         self.__dict__['optimized'] = self
         return self
 
-    def walk(self):
-        """Recursively visit itself and all children."""
-        return cutils.walk(self)
-
     def walk_tempvar(self):
         """Shortcut for filter(lambda x: x.IS_TEMPVAR, self.walk())
         """
-        return (x for x in self.walk() if x.IS_TEMPVAR)
+        cdef vector[PyObject*] descendants = walk_dedup_fast(self)
+        cdef PyObject* x
+        for x in descendants:
+            expr = <object>x
+            if type(expr) is ExprTempVar:
+                yield expr
 
     def _complicated(self, int threshold) -> bool:
-        for expr in self.walk():
-            threshold -= 1
-            if not threshold:
-                return True
-        return False
+        if threshold <= 0:
+            return True
+        cdef vector[PyObject*] descendants = walk_dedup_fast(self)
+        return descendants.size() >= <uint32_t>threshold
 
     def has_table(self):
         '''Recursively checks whether the expression contains ExprTable.

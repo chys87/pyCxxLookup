@@ -41,26 +41,6 @@ from libcpp.vector cimport vector
 from .pyx_helpers cimport flat_hash_set
 
 
-def walk(node):
-    '''Iterate over node and its children without deduplication.
-    '''
-    cdef PyObject* nodep
-    cdef vector[PyObject*] q
-
-    yield node
-    nodep = <PyObject*>node;
-    q.push_back(nodep)
-
-    while not q.empty():
-        nodep = q.back()
-        q.pop_back()
-        node = <object>nodep
-        children = node.children
-        yield from children
-        for child in children:
-            q.push_back(<PyObject*>(child))
-
-
 def walk_dedup(node):
     '''Iterate over node and its children with deduplication.
     >>> class A:
