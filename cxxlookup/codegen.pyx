@@ -870,7 +870,7 @@ class MakeCodeForRange:
             cycle = utils.np_cycle(values, max_cycle=max(num//2, num-32))
             if cycle:
                 res.extend(self._yield_code(0, values[:cycle],
-                                            table_name + '_cycle',
+                                            f'{table_name}_cycle{cycle}',
                                             inexpr_base0 % cycle,
                                             addition=addition,
                                             maxdepth=maxdepth-1))
