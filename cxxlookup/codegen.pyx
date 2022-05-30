@@ -491,7 +491,7 @@ cdef _gen_strides(uint32_t lo, values, uint32_t num, uint32_t maxv_bits,
     '''
     res = []
     values_nonzeros = np.count_nonzero(values)
-    cdef uint32_t stride = 1024
+    cdef uint32_t stride = 4096
     while stride >= 2:
         if stride * 8 > num:
             stride >>= 1
@@ -499,7 +499,7 @@ cdef _gen_strides(uint32_t lo, values, uint32_t num, uint32_t maxv_bits,
         base_values = utils.np_min_by_chunk(values, stride)
         delta = values - np.repeat(base_values, stride)[:num]
         if (np.count_nonzero(delta) < values_nonzeros / (stride * .9)
-                or utils.np_max(delta).bit_length() <= maxv_bits // 2):
+                or bit_length(utils.np_max(delta)) <= maxv_bits * 3 // 4):
             base_inexpr = inexpr_base0 // stride
             base_expr = _make_code(
                     0, base_values,
