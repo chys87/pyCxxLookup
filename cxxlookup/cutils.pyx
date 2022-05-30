@@ -31,14 +31,16 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
+import math
+
 cimport cython
 from cpython.ref cimport PyObject
-from libc.stdint cimport int64_t, uintptr_t, uint32_t
+from libc.stdint cimport int64_t, uintptr_t, uint32_t, uint64_t
 from libcpp cimport bool as c_bool
 from libcpp.utility cimport move as std_move
 from libcpp.vector cimport vector
 
-from .pyx_helpers cimport flat_hash_set
+from .pyx_helpers cimport abs as cpp_abs, flat_hash_set
 
 
 def walk_dedup(node):
@@ -181,3 +183,82 @@ cdef float linregress_slope(uint32_t[::1] y):
     else:
         with nogil:
             return linregress_slope_internal(y, n)
+
+
+cdef Frac double_as_frac(double flt):
+    n, d = float(flt).as_integer_ratio()
+    return make_frac_fast(n, d)
+
+
+def test_limit_denominator(double num, uint64_t max_denominator):
+    '''
+    >>> import math
+    >>> test_limit_denominator(math.pi, 10)
+    (22, 7)
+    >>> test_limit_denominator(math.pi, 100)
+    (311, 99)
+    >>> test_limit_denominator(math.pi, 1024)
+    (355, 113)
+    >>> test_limit_denominator(-math.pi, 1024)
+    (-355, 113)
+    '''
+    frac = limit_denominator(double_as_frac(num), max_denominator)
+    return (frac.numerator, frac.denominator)
+
+
+@cython.cdivision(True)
+cdef Frac limit_denominator(Frac self, uint64_t max_denominator) nogil:
+    if max_denominator < 1 or self.denominator == 0:
+        return self
+    if self.denominator <= max_denominator:
+        return self
+
+    cdef uint64_t p0 = 0
+    cdef uint64_t q0 = 1
+    cdef uint64_t p1 = 1
+    cdef uint64_t q1 = 0
+    cdef uint64_t d = self.denominator
+    cdef int64_t nn = self.numerator
+    cdef c_bool negative = nn < 0
+    cdef uint64_t int_part = <uint64_t>cpp_abs(nn) // d
+    cdef uint64_t n = <uint64_t>cpp_abs(nn) % d
+
+    cdef uint64_t orig_n = n
+    cdef uint64_t orig_d = d
+
+    cdef uint64_t a
+    cdef uint64_t q2
+    cdef uint64_t tmp
+
+    while True:
+        a = n // d
+        q2 = q0 + a * q1
+        if q2 > max_denominator:
+            break
+
+        tmp = p0
+        p0 = p1
+        q0 = q1
+        p1 = tmp + a * p1
+        q1 = q2
+
+        tmp = n
+        n = d
+        d = tmp - a * d
+
+    cdef uint64_t k = (max_denominator - q0) // q1
+    cdef Frac bound1 = make_frac(p0+k*p1, q0+k*q1)
+    cdef Frac bound2 = make_frac(p1, q1)
+    cdef double self_frac_double = <double>orig_n / <double>orig_d
+    cdef double bound1_double = bound1.to_double()
+    cdef double bound2_double = bound2.to_double()
+    cdef Frac frac_part_res
+    if cpp_abs(bound2_double - self_frac_double) <= \
+            cpp_abs(bound1_double - self_frac_double):
+        frac_part_res = bound2
+    else:
+        frac_part_res = bound1
+
+    cdef uint64_t new_d = frac_part_res.denominator
+    cdef int64_t new_n_abs = new_d * int_part + frac_part_res.numerator
+    return make_frac_fast(-new_n_abs if negative else new_n_abs, new_d)

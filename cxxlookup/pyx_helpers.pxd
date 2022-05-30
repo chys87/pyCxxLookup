@@ -1,9 +1,27 @@
-from libc.stdint cimport uint32_t, uint64_t
+from libc.stdint cimport int64_t, uint32_t, uint64_t
 from libcpp.utility cimport pair
+
+
+cdef extern from "<cmath>" nogil:
+    float abs(float)
+    double abs(double)
+    long long int abs(long long int)
+    long int abs(long int)
+    int abs(int)
 
 
 cdef extern from "pyx_helpers.h" namespace "cxxlookup" nogil:
     uint32_t bit_length(uint64_t)
+
+    uint64_t gcd(uint64_t, uint64_t)
+
+    cdef cppclass Frac:
+        int64_t numerator
+        uint64_t denominator
+        double to_double()
+
+    Frac make_frac(int64_t, uint64_t)
+    Frac make_frac_fast(int64_t, uint64_t)
 
 
 cdef extern from "<absl/container/flat_hash_set.h>" namespace "absl" nogil:

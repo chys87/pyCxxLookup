@@ -32,6 +32,7 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 import functools
+import math
 import os
 import sys
 import threading
@@ -186,22 +187,7 @@ def gcd_many(array, /):
     res = _speedups.gcd_many(array)
     if res is not None:
         return res
-    res = 0
-    for v in array:
-        v = int(v)
-        if not v:
-            continue
-        if res < 2:
-            if not res:
-                res = v
-                continue
-            else:
-                break
-        # We could have used fractions.gcd, but here we do it ourselves for
-        # better performance (fractions.gcd has no C implementation)
-        while v:
-            res, v = v, res % v
-    return res
+    return math.gcd(*array)
 
 
 def gcd_reduce(array):

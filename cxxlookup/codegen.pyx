@@ -35,7 +35,6 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 from collections import defaultdict
-from fractions import Fraction
 import math
 from multiprocessing.pool import ThreadPool
 import string
@@ -55,7 +54,9 @@ from libcpp cimport bool as c_bool
 from libcpp.utility cimport move as std_move, pair
 from libcpp.vector cimport vector
 
-from .cutils cimport linregress_slope, walk_dedup_fast
+from .cutils cimport (
+    Frac, make_frac, double_as_frac, limit_denominator,
+    linregress_slope, walk_dedup_fast)
 from .expr cimport const_type, type_max, type_name
 from .pyx_helpers cimport bit_length, flat_hash_set
 
@@ -384,19 +385,31 @@ cdef vector[SlopePair] _gen_possible_slopes(np_values):
 
     # Linear regression
     cdef float slope_linregress = linregress_slope(np_values)
-    slope_frac = Fraction(slope_linregress)
+    cdef Frac slope_frac = double_as_frac(slope_linregress)
+    cdef Frac slope_limited
 
+    cdef int64_t numerator
+    cdef uint64_t denominator
     cdef uint32_t last_denominator = 0
     cdef uint32_t max_denominator
     cdef uint32_t i
+    cdef uint32_t j
+    cdef Frac slope_use
     for i in range(17):
         max_denominator = <uint32_t>1 << <uint32_t>i
-        slope_limited = slope_frac.limit_denominator(max_denominator)
 
-        for slope in (slope_limited,
-                      Fraction(int(slope * max_denominator), max_denominator)):
-            numerator = slope.numerator
-            denominator = slope.denominator
+        slope_limited = limit_denominator(slope_frac, max_denominator)
+
+        for j in range(2):
+            if j == 0:
+                slope_use = slope_limited
+            else:
+                slope_use = make_frac(
+                    <int64_t>(slope_linregress * max_denominator),
+                    max_denominator)
+
+            numerator = slope_use.numerator
+            denominator = slope_use.denominator
             if numerator != 0 and denominator > last_denominator and \
                     -0x80000000 <= numerator * (num - 1) <= 0x7fffffff:
                 last_denominator = denominator
@@ -405,7 +418,7 @@ cdef vector[SlopePair] _gen_possible_slopes(np_values):
 
         # If slope_limited is already very close to the real slope,
         # don't try more
-        if abs(<float>float(slope_limited) - slope_linregress) * num <= 1:
+        if abs(slope_limited.to_double() - slope_linregress) * num <= 1:
             break
 
     return std_move(res)
