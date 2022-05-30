@@ -9,10 +9,10 @@ clean:
 	rm -rf build
 
 build:
-	python3 setup.py build
+	export PATH="/usr/lib/ccache:$$PATH"; python3 setup.py build
 
 install:
-	python3 setup.py install --user
+	export PATH="/usr/lib/ccache:$$PATH"; python3 setup.py install --user
 
 test:
 	tests/tests.py

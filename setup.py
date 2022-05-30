@@ -49,10 +49,9 @@ def main():
         os.environ.setdefault('CFLAGS', DEFAULT_CFLAGS)
         os.environ.setdefault('CXXFLAGS', DEFAULT_CFLAGS + ' -std=gnu++20')
 
-        has_ccache = bool(shutil.which('ccache'))
         if shutil.which('clang++') and shutil.which('clang'):
-            os.environ['CC'] = 'ccache clang' if has_ccache else 'clang'
-            os.environ['CXX'] = 'ccache clang++' if has_ccache else 'clang++'
+            os.environ['CC'] = 'clang'
+            os.environ['CXX'] = 'clang++'
             os.environ['LDSHARED'] = 'clang++ -shared'
 
 
