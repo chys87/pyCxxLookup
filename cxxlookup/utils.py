@@ -216,6 +216,8 @@ def np_min(array, /):
     '''
     >>> np_min(np.array([3,2,1,2,3], np.uint32))
     1
+    >>> np_min(np.array([3,-3,5,-2], np.int64))
+    -3
     '''
     res = _speedups.min_max(array, 0)
     if res is not None:

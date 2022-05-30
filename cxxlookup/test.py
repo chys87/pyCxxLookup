@@ -82,15 +82,22 @@ def check_result(exe_name, cwd, base, values):
                         "(Expected {} bytes; Got {} bytes)".format(
                             values.size * 4, len(test_output)))
 
-    got_values = np.fromstring(test_output, dtype=np.uint32)
+    got_values = np.frombuffer(test_output, dtype=np.uint32)
 
     unequal = (values != got_values)
 
     if np.any(unequal):
-        k = unequal.tostring().find(b'\x01')
-        raise TestError("[{}]: Expected {}; Got {}".format(base + k,
-                                                           values[k],
-                                                           got_values[k]))
+        unequal_indices = unequal.nonzero()[0]
+        msg = []
+        for k in unequal_indices[:10]:
+            msg.append(
+                "[{0} ({0:#x})]: Expected {1} ({1:#x}); Got {2} ({2:#x})".\
+                        format(base + k, values[k], got_values[k]))
+
+        if len(unequal_indices) > 10:
+            msg.append(f'{len(unequal_indices) - 10} more...')
+
+        raise TestError('\n'.join(msg))
 
 
 def _run_test(func_name, base, values, hole, headers, code,

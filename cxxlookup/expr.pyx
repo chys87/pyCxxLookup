@@ -189,8 +189,6 @@ class Expr:
 
     def __sub__(self, r):
         r = exprize(r)
-        if not r.IS_CONST:
-            return NotImplemented
         return Add(self, -r)
 
     def __and__(self, r):
@@ -225,6 +223,9 @@ class Expr:
 
     def __ge__(self, r):
         return ExprCompare(self, '>=', exprize(r))
+
+    def __neg__(self):
+        return ExprNeg(self)
 
     __radd__ = __add__
     __rmul__ = __mul__
@@ -978,6 +979,47 @@ class ExprCast(Expr):
     overhead = 0
 
 
+class ExprNeg(Expr):
+    __slots__ = 'rtype', 'value', '__optimized'
+
+    def __new__(cls, value):
+        self = super(ExprNeg, cls).__new__(cls)
+        self.rtype = value.rtype
+        self.value = value
+        self.__optimized = None
+        return self
+
+    def __str__(self):
+        value_s = utils.trim_brackets(str(self.value))
+        return f'-({value_s})'
+
+    @property
+    def children(self):
+        return self.value,
+
+    @property
+    def optimized(self):
+        res = self.__optimized
+        if res is None:
+            value = self.value
+            if type(value) is ExprNeg:
+                res = value.value.optimized
+            elif type(value) is ExprConst:
+                res = -value.value
+            else:
+                res = self
+            self.__optimized = res
+
+        return res
+
+    def extract_subexprs(self, threshold, callback, allow_extract_table):
+        super().extract_subexprs(threshold, callback, allow_extract_table)
+        self.value = callback(self.value, allow_extract_table,
+                              self.value._complicated(threshold))
+
+    overhead = 0
+
+
 class ExprCond(Expr):
     IS_COND = True
 
@@ -1208,6 +1250,10 @@ def Add(*in_exprs):
         return exprs[0]
     else:
         return ExprAdd(exprs, const_expr)
+
+
+def Neg(expr):
+    return ExprNeg(exprize(expr))
 
 
 def Cast(type, value):

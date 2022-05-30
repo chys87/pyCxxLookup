@@ -16,3 +16,5 @@ cdef vector[PyObject*] walk_dedup_fast(node)
 # Frac operations
 cdef Frac double_as_frac(double)
 cdef Frac limit_denominator(Frac, uint64_t max_denominator) nogil
+
+cdef linear_reduce(uint32_t[::1] values, Frac slope)

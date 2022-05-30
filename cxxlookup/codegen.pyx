@@ -55,8 +55,8 @@ from libcpp.utility cimport move as std_move, pair
 from libcpp.vector cimport vector
 
 from .cutils cimport (
-    Frac, make_frac, double_as_frac, limit_denominator,
-    linregress_slope, walk_dedup_fast)
+    Frac, make_frac, make_frac_fast, double_as_frac, limit_denominator,
+    linear_reduce, linregress_slope, walk_dedup_fast)
 from .expr cimport const_type, type_max, type_name
 from .pyx_helpers cimport bit_length, flat_hash_set
 
@@ -379,12 +379,12 @@ cdef vector[SlopePair] _gen_possible_slopes(np_values):
     # The remainder array will have many equal values
     slope, slope_count = utils.most_common_element_count(
                 utils.slope_array(np_values, np.int64))
-    if slope and -0x7fffffff <= slope <= 0x80000000 and \
+    if slope and -0x80000000 <= slope <= 0x7fffffff and \
             <uint32_t>slope_count * 3 >= num:
         res.push_back(SlopePair(slope, 1))
 
     # Linear regression
-    cdef float slope_linregress = linregress_slope(np_values)
+    cdef float slope_linregress = linregress_slope(values)
     cdef Frac slope_frac = double_as_frac(slope_linregress)
     cdef Frac slope_limited
 
@@ -443,9 +443,8 @@ cdef _prepare_almost_linear_tasks(values, uint32_t num, uint32_t uniq,
     for slope_pair in slopes:
         slope_num = slope_pair.first
         slope_denom = slope_pair.second
-        reduced_values = values - \
-            np.arange(0, slope_num * num, slope_num, dtype=np.int64) \
-            // slope_denom
+        reduced_values = linear_reduce(
+            values, make_frac_fast(slope_num, slope_denom))
         # Negative values may cause problems
         offset = utils.np_min(reduced_values)
         reduced_values = np.subtract(reduced_values, offset,
@@ -463,6 +462,24 @@ cdef _prepare_almost_linear_tasks(values, uint32_t num, uint32_t uniq,
                                  slope_num, slope_denom))
 
     return linear_tasks
+
+
+def _test_prepare_almost_linear_tasks(values):
+    '''
+    >>> v = np.array([54025 - (i + (i % 17)) // 7 for i in range(16384)],
+    ...              dtype=np.uint32)
+    >>> res = _test_prepare_almost_linear_tasks(v)
+    >>> (reduced_values, reduced_uniqs, offset, slope_num, slope_denom), = [
+    ...     item for item in res if item[3:] == (-1, 7)]
+    >>> slope_num, slope_denom
+    (-1, 7)
+    >>> rs = reduced_values + offset - np.arange(v.size, dtype=np.uint32) // 7
+    >>> (rs == v).all()
+    True
+    '''
+    return _prepare_almost_linear_tasks(
+        values, values.size, utils.np_unique(values).size,
+        bit_length(np.max(values)))
 
 
 cdef _gen_strides(uint32_t lo, values, uint32_t num, uint32_t maxv_bits,
@@ -900,7 +917,10 @@ class MakeCodeForRange:
                                        skip_almost_linear_reduce=True,
                                        maxdepth=maxdepth-1)
 
-                return inexpr_base0 * slope_num // slope_denom + expr
+                if slope_num > 0:
+                    return inexpr_base0 * slope_num // slope_denom + expr
+                else:
+                    return Neg(inexpr_base0 * -slope_num // slope_denom) + expr
 
             res.extend(utils.thread_pool_map(
                 self._thread_pool, gen_linear, linear_tasks))

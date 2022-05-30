@@ -87,8 +87,7 @@ class Tester:
         print('Running test', name, '...')
 
         if callable(res):
-            res(self, name)
-            return
+            return res(self, name)
 
         elif isinstance(res, dict):
             values = res['values']
@@ -117,15 +116,19 @@ class Tester:
 
         cl = cxxlookup.CxxLookup('test_func', base, values, hole=hole, opt=opt)
 
+        res = True
+
         try:
             cl.test(cxx_name=cxx_name)
 
         except cxxlookup.TestError as e:
             print('Failed:', e, file=sys.stderr)
-            return
+            res = False
 
         if self._diff and os.path.exists(bak_name):
             subprocess.call(['diff', '-u', bak_name, cxx_name])
+
+        return res
 
 
 TEST_LIST = []
@@ -141,6 +144,7 @@ def Testing(test_name):
 @Testing('doctest')
 def _():
     TEST_MODS = [
+        cxxlookup.codegen,
         cxxlookup.expr,
         cxxlookup.groupify,
         cxxlookup.utils,
@@ -148,8 +152,14 @@ def _():
     ]
 
     def run(*args, **kwargs):
+        suc = True
         for mod in TEST_MODS:
-            print(mod.__name__, ':', doctest.testmod(mod))
+            print(mod.__name__, ':')
+            res = doctest.testmod(mod)
+            print(res)
+            if res[0]:
+                suc = False
+        return suc
 
     return run
 
@@ -244,6 +254,26 @@ def _():
     hi_values = [random.choice(tmp_values) for _ in range(1024)]
     values.extend([0] * 1000)
     values.extend(lo + hi * 65536 for (lo, hi) in zip(lo_values, hi_values))
+
+    return values
+
+
+@Testing('linear')
+def _():
+    values = []
+
+    # Expect a small positive slope
+    values.extend([i // 11 for i in range(16384)])
+
+    values.extend([0] * 16384)
+    values.extend([54025 + (i + i % 17) // 7 for i in range(16384)])
+
+    # Expect a small negative slope
+    values.extend([0] * 16384)
+    values.extend([54025 - i // 13 for i in range(16384)])
+
+    values.extend([0] * 16384)
+    values.extend(54025 - (i + (i % 17)) // 7 for i in range(16384))
 
     return values
 
@@ -379,6 +409,8 @@ def main():
 
     import_cxxlookup()
 
+    suc = True
+
     if args.tests:
         if args.test_names:
             test_list = []
@@ -392,7 +424,11 @@ def main():
         tester = Tester(args)
 
         for test_name, test_func in test_list:
-            tester.run(test_name, test_func)
+            if not tester.run(test_name, test_func):
+                suc = False
+
+    if not suc:
+        sys.exit(1)
 
 
 if __name__ == '__main__':

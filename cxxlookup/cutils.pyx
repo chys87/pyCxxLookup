@@ -33,6 +33,8 @@
 
 import math
 
+import numpy as np
+
 cimport cython
 from cpython.ref cimport PyObject
 from libc.stdint cimport int64_t, uintptr_t, uint32_t, uint64_t
@@ -150,11 +152,12 @@ cdef inline float linregress_slope_internal(uint32_t[::1] y, int n) nogil:
     # because x_i = i, so denominator = n(n^2-1)/12
 
     cdef int i
-    cdef float x_bar = (n - 1) * <float>.5
-    cdef float a = 0
+    cdef double nd = n
+    cdef double x_bar = (nd - 1) * .5
+    cdef double a = 0
     for i in range(n):
         a += y[i] * (i - x_bar)
-    return 12 * a / (n * (n * n - 1))
+    return 12 * a / (nd * (nd * nd - 1))
 
 
 @cython.nonecheck(False)
@@ -165,14 +168,6 @@ cdef float linregress_slope(uint32_t[::1] y):
     scipy.stats.linregress(np.arange(len(y), np.float32),
                            y.astype(np.float32)).slope,
     but much faster.
-
-    >>> import numpy as np
-    >>> linregress_slope(np.zeros(10, dtype=np.uint32))
-    0.0
-    >>> linregress_slope(np.arange(1, 100, 3, dtype=np.uint32))
-    3.0
-    >>> round(linregress_slope(np.arange(100, dtype=np.uint32) // 2), 3)
-    0.5
     '''
     cdef int n = len(y)
 
@@ -183,6 +178,22 @@ cdef float linregress_slope(uint32_t[::1] y):
     else:
         with nogil:
             return linregress_slope_internal(y, n)
+
+
+def __test_linregress_slope(y):
+    '''
+    >>> __test_linregress_slope(np.zeros(10, dtype=np.uint32))
+    0.0
+    >>> __test_linregress_slope(np.arange(1, 100, 3, dtype=np.uint32))
+    3.0
+    >>> round(__test_linregress_slope(np.arange(100, dtype=np.uint32) // 2), 3)
+    0.5
+    >>> round(__test_linregress_slope(
+    ...     np.array([54025 - (i + (i % 17)) // 7 for i in range(16384)],
+    ...     dtype=np.uint32)), 3)
+    -0.143
+    '''
+    return linregress_slope(y)
 
 
 cdef Frac double_as_frac(double flt):
@@ -262,3 +273,32 @@ cdef Frac limit_denominator(Frac self, uint64_t max_denominator) nogil:
     cdef uint64_t new_d = frac_part_res.denominator
     cdef int64_t new_n_abs = new_d * int_part + frac_part_res.numerator
     return make_frac_fast(-new_n_abs if negative else new_n_abs, new_d)
+
+
+@cython.cdivision(True)
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cdef linear_reduce(uint32_t[::1] values, Frac slope):
+    '''
+    Same as
+        values -
+        np.arange(0, numerator * n, numerator, dtype=np.int64) // denominator
+
+    except that division is done in C semantics
+    (round toward 0, rather than -infinity)
+
+    Input dtype is uint32, but we output int64 to handle negative values
+    properly
+    '''
+    cdef Py_ssize_t i
+    cdef Py_ssize_t n = len(values)
+    cdef int64_t numerator = slope.numerator
+    cdef uint64_t denominator = slope.denominator
+    res = np.empty(n, dtype=np.int64)
+    cdef int64_t[::1] res_values = res
+
+    with nogil:
+        for i in range(n):
+            res_values[i] = values[i] - i * numerator // <int64_t>denominator
+
+    return res
