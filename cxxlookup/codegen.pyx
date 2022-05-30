@@ -516,21 +516,21 @@ cdef _gen_strides(uint32_t lo, values, uint32_t num, uint32_t maxv_bits,
     return res
 
 
-cdef _gen_compressed(uint32_t lo, values, uint32_t num, uint32_t uniq,
-                     uint32_t maxv, uint32_t maxv_bits, inexpr, inexpr_long,
-                     inexpr_base0, int addition, int maxdepth, str table_name,
-                     _make_code):
+cdef _gen_packed(uint32_t lo, values, uint32_t num, uint32_t uniq,
+                 uint32_t maxv, uint32_t maxv_bits, inexpr, inexpr_long,
+                 inexpr_base0, int addition, int maxdepth, str table_name,
+                 _make_code):
     cdef int offset
     if maxv_bits in (3, 4) and num > 16 and maxdepth > 0:
         offset = 0
         if (addition > 0) and (addition + maxv < 16):
             offset = addition
-        compressed_values = utils.compress_array(values + offset, 2)
+        packed_values = utils.pack_array(values + offset, 2)
 
         expr = inexpr_base0
         # (table[expr/2] >> (expr%2*4)) & 15
         expr_shift = expr >> 1
-        expr_left = _make_code(0, compressed_values, table_name + '_4bits',
+        expr_left = _make_code(0, packed_values, table_name + '_4bits',
                                expr_shift, skip_split_4bits_hi_lo=False,
                                maxdepth=maxdepth-1)
         expr_right = (expr & 1) << 2
@@ -540,12 +540,12 @@ cdef _gen_compressed(uint32_t lo, values, uint32_t num, uint32_t uniq,
 
     # Try using "compressed" table. 4->1
     if maxv_bits == 2 and num > 32 and maxdepth > 0:
-        compressed_values = utils.compress_array(values, 4)
+        packed_values = utils.pack_array(values, 4)
 
         expr = inexpr_base0
         # (table[expr/4] >> (expr%4*2)) & 3
         expr_shift = expr >> 2
-        expr_left = _make_code(0, compressed_values, table_name + '_2bits',
+        expr_left = _make_code(0, packed_values, table_name + '_2bits',
                                expr_shift, maxdepth=maxdepth-1)
         expr_right = (expr & 3) << 1
         expr = (expr_left >> expr_right) & 3
@@ -554,12 +554,12 @@ cdef _gen_compressed(uint32_t lo, values, uint32_t num, uint32_t uniq,
 
     # Try using "bitvector". 8->1
     if (maxv == 1) and num > 64 and maxdepth > 0:
-        compressed_values = utils.compress_array(values, 8)
+        packed_values = utils.pack_array(values, 8)
 
         expr = inexpr_base0
         # (table[expr/8] >> (expr%8)) & 1
         expr_shift = expr >> 3
-        expr_left = _make_code(0, compressed_values, table_name + '_bitvec',
+        expr_left = _make_code(0, packed_values, table_name + '_bitvec',
                                expr_shift, maxdepth=maxdepth-1)
         expr_right = expr & 7
         expr = (expr_left >> expr_right) & 1
@@ -939,10 +939,10 @@ class MakeCodeForRange:
                 inexpr_base0, addition, maxdepth,
                 self._make_code, self._yield_code))
 
-        # Try using "compressed" table. 2->1
-        expr = _gen_compressed(lo, values, num, uniq, maxv, maxv_bits, inexpr,
-                               inexpr_long, inexpr_base0, addition, maxdepth,
-                               table_name, self._make_code)
+        # Try using "packed" table. 2->1
+        expr = _gen_packed(lo, values, num, uniq, maxv, maxv_bits, inexpr,
+                           inexpr_long, inexpr_base0, addition, maxdepth,
+                           table_name, self._make_code)
         if expr:
             res.append(expr)
             return res

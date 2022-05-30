@@ -147,9 +147,9 @@ def trim_brackets(s):
     return s
 
 
-def compress_array(array, n):
+def pack_array(array, n):
     '''
-    Compress several elements of one array into one.
+    Pack several elements of one array into one.
     '''
     bits = 8 // n
     lo = array.size % n or n
