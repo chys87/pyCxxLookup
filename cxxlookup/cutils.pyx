@@ -36,73 +36,10 @@ import math
 import numpy as np
 
 cimport cython
-from cpython.ref cimport PyObject
 from libc.stdint cimport int64_t, uintptr_t, uint32_t, uint64_t
 from libcpp cimport bool as c_bool
-from libcpp.utility cimport move as std_move
-from libcpp.vector cimport vector
 
-from .pyx_helpers cimport abs as cpp_abs, flat_hash_set
-
-
-def walk_dedup(node):
-    '''Iterate over node and its children with deduplication.
-    >>> class A:
-    ...    children = []
-    ...    def __init__(self, name): self.name = name
-    ...    def __repr__(self): return self.name
-    >>> a = A('a')
-    >>> b = A('b')
-    >>> a.children = [a, b]
-    >>> b.children = [b]
-    >>> list(walk_dedup(a))
-    [a, b]
-    >>> list(walk_dedup(b))
-    [b]
-    '''
-    cdef PyObject* nodep
-    cdef flat_hash_set[PyObject*] visited
-    cdef vector[PyObject*] q
-
-    nodep = <PyObject*>node
-    q.push_back(nodep)
-    visited.insert(nodep)
-
-    while not q.empty():
-        nodep = q.back()
-        q.pop_back()
-        node = <object>nodep
-        yield node
-        for child in node.children:
-            nodep = <PyObject*>(child)
-            if not visited.contains(nodep):
-                visited.insert(nodep)
-                q.push_back(nodep)
-
-
-cdef vector[PyObject*] walk_dedup_fast(node):
-    '''A faster version of walk_dedup, returning vector[PyObject*]
-    '''
-    cdef PyObject* nodep
-    cdef flat_hash_set[PyObject*] visited
-    cdef vector[PyObject*] res
-
-    nodep = <PyObject*>node
-    res.push_back(nodep)
-    visited.insert(nodep)
-
-    cdef size_t i = 0
-
-    while i < res.size():
-        nodep = res[i]
-        i += 1
-        for child in (<object>nodep).children:
-            nodep = <PyObject*>(child)
-            if not visited.contains(nodep):
-                visited.insert(nodep)
-                res.push_back(nodep)
-
-    return std_move(res)
+from .pyx_helpers cimport abs as cpp_abs
 
 
 class cached_property:

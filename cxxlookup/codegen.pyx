@@ -43,7 +43,6 @@ import string
 
 import numpy as np
 
-from .expr import *
 from . import expr
 from . import cutils
 from . import groupify
@@ -58,7 +57,8 @@ from libcpp.vector cimport vector
 
 from .cutils cimport (
     Frac, make_frac, make_frac_fast, double_as_frac, limit_denominator,
-    linear_reduce, linregress_slope, walk_dedup_fast)
+    linear_reduce, linregress_slope)
+from .expr cimport *
 from .expr cimport const_type, type_max, type_name
 from .pyx_helpers cimport bit_length, flat_hash_set
 
@@ -135,12 +135,12 @@ def make_code(func_name, base, values, hole, opt):
     return ''.join(res)
 
 
-def _format_code(expr, subexprs):
+def _format_code(Expr expr, subexprs):
 
     added_var = 0
     var_output_order = []
 
-    def add_var_in_expr(expr):
+    def add_var_in_expr(Expr expr):
         nonlocal added_var
 
         # Depth-first search
@@ -158,6 +158,7 @@ def _format_code(expr, subexprs):
     visited_set = set()
 
     cdef flat_hash_set[PyObject*] renamed_set
+    cdef Expr var_expr
 
     if not added_var:
         # No temporary variable
@@ -171,7 +172,7 @@ def _format_code(expr, subexprs):
         rename_map = {var: k for (k, var) in enumerate(var_output_order)}
         # renamed_set = set()
 
-        def rename_var(expr):
+        def rename_var(Expr expr):
             for x in expr.walk_tempvar():
                 if renamed_set.find(<PyObject*>x) == renamed_set.end():
                     renamed_set.insert(<PyObject*>x)
@@ -189,13 +190,14 @@ def _format_code(expr, subexprs):
             # The outermost explicit cast can absolutely be trimmed
             # beucase the variable has an explicit type.
             if var_expr.IS_CAST:
-                var_expr = var_expr.value
+                var_expr = (<ExprCast>var_expr).value
             # Inner upcasts can also be trimmed
-            while var_expr.IS_CAST and var_expr.value.rtype <= var_expr.rtype:
-                var_expr = var_expr.value
+            while var_expr.IS_CAST and \
+                    (<ExprCast>var_expr).value.rtype <= var_expr.rtype:
+                var_expr = (<ExprCast>var_expr).value
 
             code_str.append('      {} {} = {};\n'.format(
-                type_name(var_type), ExprTempVar.get_name(k),
+                type_name(var_type), get_temp_var_name(k),
                 utils.trim_brackets(str(var_expr))))
             statics.append(var_expr.statics(visited_set))
 
@@ -209,7 +211,7 @@ def _format_code(expr, subexprs):
         return ''.join(code_str), statics
 
 
-cdef int64_t _overhead(expr: Expr, opt):
+cdef int64_t _overhead(Expr expr, opt):
     """Estimate the overhead of an expression.
     We use the total number of bytes in tables plus additional overheads
     for each Expr instance.
@@ -218,32 +220,32 @@ cdef int64_t _overhead(expr: Expr, opt):
     cdef unsigned int extra = 0
     cdef PyObject* nodep
 
-    cdef vector[PyObject*] walk_list = walk_dedup_fast(expr)
+    cdef vector[PyObject*] walk_list = expr.walk_dedup_fast()
     for nodep in walk_list:
-        x = <object>nodep
-        extra += <unsigned int>x.overhead
-        total_bytes += <unsigned int>x.static_bytes
+        x = <Expr><object>nodep
+        extra += <unsigned int>x.overhead()
+        total_bytes += <unsigned int>x.static_bytes()
 
     return total_bytes + extra * <int64_t>opt.overhead_multiply
 
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-cdef _gen_linear(uint32_t[::1] values, inexpr_base0, int addition):
+cdef _gen_linear(uint32_t[::1] values, Expr inexpr_base0, int addition):
     cdef int32_t slope = values[1] - values[0]
     # (c - lo) * slope + addition
     expr = inexpr_base0
     if slope != 1:
-        expr = expr * slope
+        expr = Mul(expr, slope)
     add = <int>values[0] + addition
     if add:
-        expr = expr + add
+        expr = Add(expr, add)
     return expr
 
 
-def _gen_alinear(MakeCodeForRange mcfr, uint32_t lo, str table_name,
-                 inexpr, inexpr_long, inexpr_base0,
-                 int addition, int maxdepth, args):
+cdef _gen_alinear(MakeCodeForRange mcfr, uint32_t lo, str table_name,
+                  Expr inexpr, Expr inexpr_long, Expr inexpr_base0,
+                  int addition, int maxdepth, args):
     reduced_values, reduced_uniqs, offset, slope_num, slope_denom = args
     if slope_num > 0:
         linear_key = f'alinear{slope_num}'
@@ -261,14 +263,15 @@ def _gen_alinear(MakeCodeForRange mcfr, uint32_t lo, str table_name,
                       ctrl=SKIP_ALMOST_LINEAR_REDUCE)
 
     if slope_num > 0:
-        return inexpr_base0 * slope_num // slope_denom + expr
+        res = Div(Mul(inexpr_base0, slope_num), slope_denom)
     else:
-        return Neg(inexpr_base0 * -slope_num // slope_denom) + expr
+        res = Neg(Div(Mul(inexpr_base0, -slope_num), slope_denom))
+    return Add(res, expr)
 
 
 @cython.boundscheck(False)
-cdef _gen_uniq2_code(values, uint32_t[::1] uniqs, uint32_t num, inexpr,
-                     inexpr_base0, uint32_t lo, int addition):
+cdef _gen_uniq2_code(values, uint32_t[::1] uniqs, uint32_t num, Expr inexpr,
+                     Expr inexpr_base0, uint32_t lo, int addition):
     cdef uint32_t value0
     cdef uint32_t value1
     cdef uint64_t bit_test_mask
@@ -281,23 +284,23 @@ cdef _gen_uniq2_code(values, uint32_t[::1] uniqs, uint32_t num, inexpr,
         v0 = values[0]
         vlast = values[-1]
         if k == 1:
-            return Cond(inexpr == lo, v0 + addition,
+            return Cond(Eq(inexpr, lo), v0 + addition,
                         vlast + addition)
         elif rk == 1:
-            return Cond(inexpr == lo + k, vlast + addition,
+            return Cond(Eq(inexpr, lo + k), vlast + addition,
                         v0 + addition)
         else:
-            return Cond(inexpr < lo + k, v0 + addition,
+            return Cond(Lt(inexpr, lo + k), v0 + addition,
                         vlast + addition)
 
     elif values[0] == values[-1] and utils.is_const(values[k:num-rk]):
         # [a, ..., a, b, ..., b, a, ..., a]
         bcount = num - rk - k
         if bcount == 1:
-            cond = (inexpr == lo + k)
+            cond = Eq(inexpr, lo + k)
         else:
-            subinexpr = Cast(32, inexpr - (lo + k))
-            cond = (subinexpr < bcount)
+            subinexpr = Cast(32, Sub(inexpr, lo + k))
+            cond = Lt(subinexpr, bcount)
         return Cond(cond, <uint32_t>values[k] + addition,
                     <uint32_t>values[0] + addition)
 
@@ -317,27 +320,27 @@ cdef _gen_uniq2_code(values, uint32_t[::1] uniqs, uint32_t num, inexpr,
             bit_test_mask |= 1 << int(k)
 
         Bits = 64 if num > 32 else 32
-        expr = (Const(Bits, bit_test_mask) >> inexpr_base0) & 1
+        expr = And(RShift(Const(Bits, bit_test_mask), inexpr_base0), 1)
 
         if value1 == value0 + 1:
             if Bits > 32:
                 expr = Cast(32, expr)
             if value0 + addition != 0:
-                expr = expr + (value0 + addition)
+                expr = Add(expr, value0 + addition)
         else:
             expr = Cond(expr, value1 + addition, value0 + addition)
         return expr
 
 
-cdef _gen_split(uint32_t lo, values, inexpr, inexpr_long, inexpr_base0,
-                uint32_t num, uint32_t maxv,
+cdef _gen_split(uint32_t lo, values, Expr inexpr, Expr inexpr_long,
+                Expr inexpr_base0, uint32_t num, uint32_t maxv,
                 uint32_t maxv_bits, str table_name, int addition, int maxdepth,
                 MakeCodeForRange mcfr, uint32_t threshold):
     cdef uint32_t const_prefix_len = utils.const_range(values)
     cdef uint32_t const_suffix_len
     if const_prefix_len >= threshold:
         split_pos = const_prefix_len
-        comp_expr = (inexpr < (lo + split_pos))
+        comp_expr = Lt(inexpr, lo + split_pos)
         left_expr = Const(32, int(values[0]) + addition)
         right_expr = _make_code(
             mcfr, lo + split_pos, values[split_pos:],
@@ -349,7 +352,7 @@ cdef _gen_split(uint32_t lo, values, inexpr, inexpr_long, inexpr_base0,
         const_suffix_len = utils.const_range(values[::-1])
         if const_suffix_len >= threshold:
             split_pos = num - const_suffix_len
-            comp_expr = (inexpr < (lo + split_pos))
+            comp_expr = Lt(inexpr, lo + split_pos)
             left_expr = _make_code(
                 mcfr, lo, values[:split_pos],
                 table_name + '_l',
@@ -385,13 +388,13 @@ cdef _gen_pack_as_64_code(uint32_t[::1] values, inexpr_base0,
     cdef uint64_t mask = 0
     for k in range(len(values)):
         mask |= (<uint64_t>values[k] + offset) << (<Py_ssize_t>k * bits)
-    expr = Const(Bits, mask) >> (inexpr_base0 * bits)
+    expr = ExprRShift(Const(Bits, mask), Mul(inexpr_base0, bits))
     if Bits > 32:
         expr = Cast(32, expr)
-    expr = expr & ((1 << bits) - 1)
+    expr = ExprAnd(expr, Const(32, (1 << bits) - 1))
     cdef int64_t add = addition - offset
     if add:
-        expr = expr + add
+        expr = Add(expr, add)
     return expr
 
 
@@ -514,7 +517,7 @@ def _test_prepare_almost_linear_tasks(values):
 
 
 cdef _gen_strides(uint32_t lo, values, uint32_t num, uint32_t maxv_bits,
-                  inexpr, inexpr_long, inexpr_base0,
+                  Expr inexpr, Expr inexpr_long, Expr inexpr_base0,
                   int addition, int maxdepth, str table_name,
                   MakeCodeForRange mcfr):
     '''Generate strided expressions.
@@ -532,7 +535,7 @@ cdef _gen_strides(uint32_t lo, values, uint32_t num, uint32_t maxv_bits,
         delta = values - np.repeat(base_values, stride)[:num]
         if (np.count_nonzero(delta) < values_nonzeros / (stride * .9)
                 or bit_length(utils.np_max(delta)) <= maxv_bits * 3 // 4):
-            base_inexpr = inexpr_base0 // stride
+            base_inexpr = Div(inexpr_base0, stride)
             base_expr = _make_code(
                     mcfr, 0, base_values,
                     table_name + '_stride{}'.format(stride),
@@ -543,14 +546,15 @@ cdef _gen_strides(uint32_t lo, values, uint32_t num, uint32_t maxv_bits,
                     table_name + '_stride{}delta'.format(stride),
                     inexpr, inexpr_long, inexpr_base0,
                     addition=0, maxdepth=maxdepth-1, uniqs=None, ctrl=0)
-            res.append(base_expr + delta_expr)
+            res.append(Add(base_expr, delta_expr))
         stride >>= 1
     return res
 
 
 cdef _gen_packed(uint32_t lo, values, uint32_t num, uint32_t uniq,
-                 uint32_t maxv, uint32_t maxv_bits, inexpr, inexpr_long,
-                 inexpr_base0, int addition, int maxdepth, str table_name,
+                 uint32_t maxv, uint32_t maxv_bits, Expr inexpr,
+                 Expr inexpr_long, Expr inexpr_base0,
+                 int addition, int maxdepth, str table_name,
                  MakeCodeForRange mcfr):
     cdef int offset
     if maxv_bits in (3, 4) and num > 16 and maxdepth > 0:
@@ -561,14 +565,14 @@ cdef _gen_packed(uint32_t lo, values, uint32_t num, uint32_t uniq,
 
         expr = inexpr_base0
         # (table[expr/2] >> (expr%2*4)) & 15
-        expr_shift = expr >> 1
+        expr_shift = RShift(expr, 1)
         expr_left = _make_code(mcfr, 0, packed_values, table_name + '_4bits',
                                expr_shift, expr_shift, expr_shift, addition=0,
                                maxdepth=maxdepth-1, uniqs=None,
                                ctrl=SKIP_SPLIT_4BITS_HI_LO)
-        expr_right = (expr & 1) << 2
-        expr = (expr_left >> expr_right) & 15
-        expr = expr + (addition - offset)
+        expr_right = LShift(And(expr, 1), 2)
+        expr = And(RShift(expr_left, expr_right), 15)
+        expr = Add(expr, addition - offset)
         return expr
 
     # Try using "compressed" table. 4->1
@@ -577,13 +581,13 @@ cdef _gen_packed(uint32_t lo, values, uint32_t num, uint32_t uniq,
 
         expr = inexpr_base0
         # (table[expr/4] >> (expr%4*2)) & 3
-        expr_shift = expr >> 2
+        expr_shift = RShift(expr, 2)
         expr_left = _make_code(mcfr, 0, packed_values, table_name + '_2bits',
                                expr_shift, expr_shift, expr_shift, addition=0,
                                maxdepth=maxdepth-1, uniqs=None, ctrl=0)
-        expr_right = (expr & 3) << 1
-        expr = (expr_left >> expr_right) & 3
-        expr = expr + addition
+        expr_right = LShift(And(expr, 3), 1)
+        expr = And(RShift(expr_left, expr_right), 3)
+        expr = Add(expr, addition)
         return expr
 
     # Try using "bitvector". 8->1
@@ -592,21 +596,21 @@ cdef _gen_packed(uint32_t lo, values, uint32_t num, uint32_t uniq,
 
         expr = inexpr_base0
         # (table[expr/8] >> (expr%8)) & 1
-        expr_shift = expr >> 3
+        expr_shift = RShift(expr, 3)
         expr_left = _make_code(mcfr, 0, packed_values, table_name + '_bitvec',
                                expr_shift, expr_shift, expr_shift,
                                addition=0, maxdepth=maxdepth-1, uniqs=None,
                                ctrl=0)
-        expr_right = expr & 7
-        expr = (expr_left >> expr_right) & 1
-        expr = expr + addition
+        expr_right = And(expr, 7)
+        expr = And(RShift(expr_left, expr_right), 1)
+        expr = Add(expr, addition)
         return expr
 
 
 @cython.boundscheck(False)
-cdef _gen_gcd(uint32_t lo, values, uint32_t maxv, inexpr, inexpr_long,
-              inexpr_base0, str table_name, int addition, int maxdepth,
-              MakeCodeForRange mcfr):
+cdef _gen_gcd(uint32_t lo, values, uint32_t maxv, Expr inexpr,
+              Expr inexpr_long, Expr inexpr_base0, str table_name,
+              int addition, int maxdepth, MakeCodeForRange mcfr):
     cdef uint32_t gcd = utils.gcd_reduce(values)
     cdef uint32_t offset
     if gcd > 1:
@@ -616,9 +620,9 @@ cdef _gen_gcd(uint32_t lo, values, uint32_t maxv, inexpr, inexpr_long,
                           inexpr, inexpr_long, inexpr_base0, addition=0,
                           maxdepth=maxdepth-1, uniqs=None,
                           ctrl=SKIP_GCD_REDUCE)
-        expr = expr * gcd
+        expr = Mul(expr, gcd)
         if addition + offset:
-            expr = expr + (addition + offset)
+            expr = Add(expr, addition + offset)
 
         # If the divided values are significantly smaller, we
         # likely dont' need to retry the origianl values
@@ -629,8 +633,8 @@ cdef _gen_gcd(uint32_t lo, values, uint32_t maxv, inexpr, inexpr_long,
 
 
 cdef _gen_lo_hi(uint32_t lo, values, uint32_t num, uint32_t uniq,
-                uint32_t maxv_bits, inexpr, inexpr_long,
-                inexpr_base0, addition, int maxdepth, str table_name,
+                uint32_t maxv_bits, Expr inexpr, Expr inexpr_long,
+                Expr inexpr_base0, addition, int maxdepth, str table_name,
                 MakeCodeForRange mcfr, c_bool skip_split_4bits_hi_lo):
     '''Split values into low and high parts
     '''
@@ -691,7 +695,7 @@ cdef _gen_lo_hi(uint32_t lo, values, uint32_t num, uint32_t uniq,
             mcfr, lo, hi_values, '{}_{}hi'.format(table_name, k),
             inexpr, inexpr_long, inexpr_base0, addition=0,
             maxdepth=maxdepth-1, uniqs=hi_uniqs, ctrl=0)
-        res.append(lo_expr + hi_expr * hi_gcd)
+        res.append(Add(lo_expr, Mul(hi_expr, hi_gcd)))
 
         if hi_uniq <= 2:  # No reason to continue trying
             break
@@ -701,8 +705,8 @@ cdef _gen_lo_hi(uint32_t lo, values, uint32_t num, uint32_t uniq,
 
 cdef _gen_two_level_lookup(values, uniqs, uint32_t uniq, uint32_t lo,
                            str table_name,
-                           inexpr, inexpr_long, inexpr_base0, int addition,
-                           int maxdepth, MakeCodeForRange mcfr):
+                           Expr inexpr, Expr inexpr_long, Expr inexpr_base0,
+                           int addition, int maxdepth, MakeCodeForRange mcfr):
     indices = np.searchsorted(uniqs, values)
     # Level 1
     expr = _make_code(mcfr, lo, indices, table_name + '_index',
@@ -722,8 +726,8 @@ cdef _gen_two_level_lookup(values, uniqs, uint32_t uniq, uint32_t lo,
                        uniqs=uniqs, ctrl=0)
 
 
-cdef object __var_c = FixedVar(32, 'c')
-cdef object __var_cl = FixedVar(64, 'cl')
+cdef object __var_c = ExprFixedVar(32, 'c')
+cdef object __var_cl = ExprFixedVar(64, 'cl')
 
 
 cdef class MakeCodeForRange:
@@ -746,13 +750,13 @@ cdef _make_code_for_range(uint32_t lo, values, str table_name, opt,
     # (except variables and constants)
     visited_times = defaultdict(int)
 
-    def visit(expr):
+    def visit(Expr expr):
         if expr.IS_VAR or expr.IS_CONST:
             return
         idx = id(expr)
         visited_times[idx] += 1
         if visited_times[idx] == 1:
-            for subexpr in expr.children:
+            for subexpr in expr.children():
                 visit(subexpr)
 
     visit(expr)
@@ -760,7 +764,8 @@ cdef _make_code_for_range(uint32_t lo, values, str table_name, opt,
     subexprs = []
     subexpr_rev = {}
 
-    def make_subexpr(expr, allow_extract_table, prefer_extracted):
+    def make_subexpr(Expr expr, c_bool allow_extract_table,
+                     c_bool prefer_extracted):
         if expr.IS_VAR:
             return expr
         idx = id(expr)
@@ -768,13 +773,13 @@ cdef _make_code_for_range(uint32_t lo, values, str table_name, opt,
         if ind is None:
             if not prefer_extracted and visited_times.get(idx, 0) <= 1:
                 return expr
-            if not allow_extract_table and expr.has_table:
+            if not allow_extract_table and expr.has_table():
                 return expr
             ind = len(subexprs)
             subexprs.append(expr)
             subexpr_rev[idx] = ind
 
-        return TempVar(expr.rtype, ind)
+        return ExprTempVar(expr.rtype, ind)
 
     # Extract complicated expressions
     # as variables for code readability
@@ -782,7 +787,8 @@ cdef _make_code_for_range(uint32_t lo, values, str table_name, opt,
 
     # Final optimization: Remove unnecessary explicit upcast
     while expr.IS_CAST and \
-            (expr.rtype >= 31 or expr.rtype >= expr.value.rtype):
+            ((<ExprCast>expr).rtype >= 31 or
+             (<ExprCast>expr).rtype >= (<ExprCast>expr).value.rtype):
         expr = expr.value
 
     return expr, subexprs
@@ -790,9 +796,10 @@ cdef _make_code_for_range(uint32_t lo, values, str table_name, opt,
 
 # We don't use default values for arguments.
 # Cython implements them in a stupid way.
-cdef _make_code(MakeCodeForRange mcfr, uint32_t lo, values, str table_name,
-                inexpr, inexpr_long, inexpr_base0,
-                int addition, int maxdepth, uniqs, uint32_t ctrl):
+cdef Expr _make_code(MakeCodeForRange mcfr, uint32_t lo, values,
+                     str table_name,
+                     Expr inexpr, Expr inexpr_long, Expr inexpr_base0,
+                     int addition, int maxdepth, uniqs, uint32_t ctrl):
     exprs = _yield_code(mcfr, lo, values, table_name, inexpr,
                         inexpr_long, inexpr_base0, addition=addition,
                         maxdepth=maxdepth, uniqs=uniqs,
@@ -800,8 +807,9 @@ cdef _make_code(MakeCodeForRange mcfr, uint32_t lo, values, str table_name,
     min_expr = None
     cdef int64_t min_overhead = 0
     cdef int64_t overhead
+    cdef Expr expr
     for expr in exprs:
-        expr = expr.optimized
+        expr = expr.optimize()
         overhead = _overhead(expr, mcfr.opt)
         if min_expr is None or overhead < min_overhead:
             min_expr = expr
@@ -811,7 +819,7 @@ cdef _make_code(MakeCodeForRange mcfr, uint32_t lo, values, str table_name,
 
 @cython.boundscheck(False)
 cdef _yield_code(MakeCodeForRange mcfr, uint32_t lo, values, str table_name,
-                 inexpr, inexpr_long, inexpr_base0,
+                 Expr inexpr, Expr inexpr_long, Expr inexpr_base0,
                  int addition, int maxdepth, uniqs, uint32_t ctrl):
     """
     Everything in values must be non-negative; addition may be negative.
@@ -855,17 +863,17 @@ cdef _yield_code(MakeCodeForRange mcfr, uint32_t lo, values, str table_name,
     cdef uint32_t maxv_bits = bit_length(maxv)
 
     if inexpr is inexpr_long or inexpr_long is None:
-        inexpr = inexpr_long = inexpr.optimized
+        inexpr = inexpr_long = inexpr.optimize()
     else:
-        inexpr = inexpr.optimized
-        inexpr_long = inexpr_long.optimized
+        inexpr = inexpr.optimize()
+        inexpr_long = inexpr_long.optimize()
 
     if lo == 0:
         inexpr_base0 = inexpr
     elif inexpr_base0 is not None:
-        inexpr_base0 = inexpr_base0.optimized
+        inexpr_base0 = inexpr_base0.optimize()
     else:
-        inexpr_base0 = (inexpr - lo).optimized
+        inexpr_base0 = Sub(inexpr, lo).optimize()
 
     assert inexpr.rtype in (8, 16, 32), inexpr
     assert inexpr_long.rtype in (8, 16, 32, 64), inexpr_long
@@ -886,9 +894,9 @@ cdef _yield_code(MakeCodeForRange mcfr, uint32_t lo, values, str table_name,
             if c0 == 0:
                 res.append(inexpr)
             else:
-                res.append(inexpr + c0)
+                res.append(Add(inexpr, c0))
         elif c0 == 0 and (c1 & (c1 - 1)) == 0:
-            res.append(inexpr << (bit_length(c1) - 1))
+            res.append(LShift(inexpr, bit_length(c1) - 1))
         else:
             res.append(Cond(inexpr, c1, c0))
         return res
@@ -913,7 +921,7 @@ cdef _yield_code(MakeCodeForRange mcfr, uint32_t lo, values, str table_name,
         if cycle:
             res.extend(_yield_code(mcfr, 0, values[:cycle],
                                    f'{table_name}_cycle{cycle}',
-                                   inexpr_base0 % cycle,
+                                   ExprMod(inexpr_base0, ExprConst(32, cycle)),
                                    inexpr_long=None, inexpr_base0=None,
                                    addition=addition, maxdepth=maxdepth-1,
                                    uniqs=None, ctrl=0))
@@ -1003,6 +1011,6 @@ cdef _yield_code(MakeCodeForRange mcfr, uint32_t lo, values, str table_name,
 
     expr = ExprTable(table_type, table_name, values, inexpr_long, lo)
     if addition != 0:
-        expr = expr + addition
+        expr = Add(expr, addition)
     res.append(expr)
     return res

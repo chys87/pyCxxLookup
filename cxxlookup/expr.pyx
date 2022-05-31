@@ -1,6 +1,7 @@
 # distutils: language=c++
 # cython: language_level=3
 # cython: profile=True
+# cython: cdivision=True
 
 
 # Copyright (c) 2014-2022, chys <admin@CHYS.INFO>
@@ -37,13 +38,15 @@ import threading
 cimport cython
 from cpython.object cimport PyObject, PyTypeObject, Py_TYPE
 from libc.stdint cimport int64_t, uint32_t, uint64_t
+from libcpp cimport bool as c_bool
 from libcpp.vector cimport vector
 
 from . import cutils
 from . import utils
 from . import _speedups
 
-from .cutils cimport is_pow2, walk_dedup_fast
+from .cutils cimport is_pow2
+from .pyx_helpers cimport flat_hash_set
 
 
 # Signed types only allowed for intermediate values
@@ -85,25 +88,24 @@ cdef uint64_t type_max(uint32_t type) nogil:
     return (2ull << (type - 1)) - 1
 
 
-class Expr:
+cdef class Expr:
     IS_ADD = False
     IS_AND = False
     IS_CAST = False
     IS_COMPARE = False
     IS_COND = False
     IS_CONST = False
-    IS_DIV = False
     IS_LSHIFT = False
     IS_MOD = False
     IS_RSHIFT = False
-    IS_TEMPVAR = False
     IS_VAR = False
-    __slots__ = '__has_table',
 
-    def __new__(cls, *args, **kwargs):
-        self = super(Expr, cls).__new__(cls)
-        self.__has_table = None
-        return self
+    def __cinit__(self, *args, **kwargs):
+        self._has_table = -1
+        self._optimized = None
+
+    def __init__(self, uint32_t rtype):
+        self.rtype = rtype
 
     def __str__(self):
         raise NotImplementedError
@@ -115,30 +117,41 @@ class Expr:
         '''
         return self.__str__()
 
-    def statics(self, vs):
-        return ''.join(filter(None, (x.statics(vs) for x in self.children)))
+    cdef statics(self, vs):
+        return ''.join(filter(None,
+                              ((<Expr>x).statics(vs)
+                               for x in self.children())))
 
-    children = ()
-    rtype = None
+    cdef children(self):
+        return ()
 
-    @property
-    def optimized(self):
+    cdef Expr optimize(self):
+        res = self._optimized
+        if res is None:
+            try:
+                self._optimized = res = self.do_optimize()
+            except Exception:
+                import sys
+                print('Optimization error: ', self, file=sys.stderr)
+                raise
+        return res
+
+    cdef Expr do_optimize(self):
         '''Optimize the expression
 
-        The property should never modify self, but instead return new optimized
+        This method should never modify self, but instead return new optimized
         instances if any optimization is applicable.
         '''
         return self
 
-    @property
-    def force_optimized(self):
-        self.__dict__['optimized'] = self
+    cdef force_optimized(self):
+        self._optimized = self
         return self
 
     def walk_tempvar(self):
-        """Shortcut for filter(lambda x: x.IS_TEMPVAR, self.walk())
+        """Shortcut for filter(lambda x: type(x) is ExprTempVar, self.walk())
         """
-        cdef vector[PyObject*] descendants = walk_dedup_fast(self)
+        cdef vector[PyObject*] descendants = self.walk_dedup_fast()
         cdef PyObject* x
         for x in descendants:
             expr = <object>x
@@ -148,110 +161,73 @@ class Expr:
     def _complicated(self, int threshold) -> bool:
         if threshold <= 0:
             return True
-        cdef vector[PyObject*] descendants = walk_dedup_fast(self)
+        cdef vector[PyObject*] descendants = self.walk_dedup_fast()
         return descendants.size() >= <uint32_t>threshold
 
-    def has_table(self):
+    @cython.final
+    cdef c_bool has_table(self):
         '''Recursively checks whether the expression contains ExprTable.
         If true, the expression can be unsafe to extract in ExprCond
         '''
-        res = self.__has_table
-        if res is None:
+        cdef c_bool res
+        if self._has_table < 0:
             res = False
-            for expr in self.children:
-                if expr.has_table:
+            for expr in self.children():
+                if (<Expr>expr).has_table():
                     res = True
                     break
-            self.__has_table = res
-        return res
+            self._has_table = res
+        return self._has_table
 
     def extract_subexprs(self, threshold, callback, allow_extract_table):
-        for subexpr in self.children:
+        for subexpr in self.children():
             subexpr.extract_subexprs(threshold, callback, allow_extract_table)
-
-    def __add__(self, r):
-        return Add(self, r)
-
-    def __mul__(self, r):
-        return ExprMul(self, exprize(r))
-
-    def __floordiv__(self, r):
-        return ExprDiv(self, exprize(r))
-
-    def __rfloordiv__(self, r):
-        return ExprDiv(exprize(r), self)
-
-    def __mod__(self, r):
-        return ExprMod(self, exprize(r))
-
-    def __rmod__(self, r):
-        return ExprMod(exprize(r), self)
-
-    def __sub__(self, r):
-        r = exprize(r)
-        return Add(self, -r)
-
-    def __and__(self, r):
-        return ExprAnd(self, exprize(r))
-
-    def __lshift__(self, r):
-        return ExprLShift(self, exprize(r))
-
-    def __rshift__(self, r):
-        return ExprRShift(self, exprize(r))
-
-    def __rlshift__(self, r):
-        return ExprLShift(exprize(r), self)
-
-    def __rrshift__(self, r):
-        return ExprRShift(exprize(r), self)
-
-    def __eq__(self, r):
-        return ExprCompare(self, '==', exprize(r))
-
-    def __ne__(self, r):
-        return ExprCompare(self, '!=', exprize(r))
-
-    def __lt__(self, r):
-        return ExprCompare(self, '<', exprize(r))
-
-    def __le__(self, r):
-        return ExprCompare(self, '<=', exprize(r))
-
-    def __gt__(self, r):
-        return ExprCompare(self, '>', exprize(r))
-
-    def __ge__(self, r):
-        return ExprCompare(self, '>=', exprize(r))
-
-    def __neg__(self):
-        return ExprNeg(self)
-
-    __radd__ = __add__
-    __rmul__ = __mul__
-    __rand__ = __and__
 
     # Whether the expression is likely a predicate
     # (i.e. only returns 0 or 1)
-    is_predicate = False
+    cdef c_bool is_predicate(self):
+        return False
 
     # Overhead of this expression only (not counting children)
-    overhead = 0
-    static_bytes = 0
+    cdef uint32_t overhead(self):
+        return 0
+
+    cdef uint32_t static_bytes(self):
+        return 0
+
+    cdef vector[PyObject*] walk_dedup_fast(self):
+        '''Walk over self and all descendants, returning vector[PyObject*]
+        '''
+        cdef flat_hash_set[PyObject*] visited
+        cdef vector[PyObject*] res
+
+        cdef PyObject* nodep = <PyObject*>self
+        res.push_back(nodep)
+        visited.insert(nodep)
+
+        cdef size_t i = 0
+
+        while i < res.size():
+            nodep = res[i]
+            i += 1
+            for child in (<Expr><object>nodep).children():
+                nodep = <PyObject*>(child)
+                if not visited.contains(nodep):
+                    visited.insert(nodep)
+                    res.push_back(nodep)
+
+        return std_move(res)
 
 
-class ExprVar(Expr):
+cdef class ExprVar(Expr):
     IS_VAR = True
-
-    def __init__(self, type):
-        super().__init__()
-        self.rtype = type
 
     def _complicated(self, threshold):
         return False
 
 
-class ExprFixedVar(ExprVar):
+@cython.final
+cdef class ExprFixedVar(ExprVar):
     def __init__(self, type, name):
         super().__init__(type)
         self.name = name
@@ -260,81 +236,85 @@ class ExprFixedVar(ExprVar):
         return self.name
 
 
-class ExprTempVar(ExprVar):
-    IS_TEMPVAR = True
-    _name_cache = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ')
+cdef list __temp_var_name_cache = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ')
 
-    def __init__(self, type, var):
+
+def _test_temp_var_name(uint32_t var):
+    '''
+    >>> list(map(_test_temp_var_name, (0, 26, 52)))
+    ['A', 'AA', 'BA']
+    '''
+    return get_temp_var_name(var)
+
+cdef str get_temp_var_name(uint32_t var):
+    global __temp_var_name_cache
+    cdef str s
+    try:
+        s = __temp_var_name_cache[var]
+    except IndexError:
+        __temp_var_name_cache += [None] * (
+            var + 1 - len(__temp_var_name_cache))
+    else:
+        if s is not None:
+            return s
+
+    cdef uint32_t length = 1
+    cdef uint32_t expressible = 26
+
+    cdef uint32_t ind = var
+    while ind >= expressible:
+        length += 1
+        ind -= expressible
+        expressible *= 26
+
+    s = ''
+    for _ in range(length):
+        s = chr(ord('A') + (ind % 26)) + s
+        ind //= 26
+    __temp_var_name_cache[var] = s
+    return s
+
+
+@cython.final
+cdef class ExprTempVar(ExprVar):
+    def __init__(self, uint32_t type, uint32_t var):
         super().__init__(type)
         self.var = var
 
-    @classmethod
-    def get_name(cls, var):
-        '''
-        >>> list(map(ExprTempVar.get_name, (0, 26, 52)))
-        ['A', 'AA', 'BA']
-        '''
-        cache = cls._name_cache
-        try:
-            s = cache[var]
-        except IndexError:
-            cache += [None] * (var + 1 - len(cache))
-        else:
-            if s is not None:
-                return s
-
-        length = 1
-        expressible = 26
-
-        ind = var
-        while ind >= expressible:
-            length += 1
-            ind -= expressible
-            expressible *= 26
-
-        s = ''
-        for _ in range(length):
-            s = chr(ord('A') + (ind % 26)) + s
-            ind //= 26
-        cache[var] = s
-        return s
-
     def __str__(self):
-        return self.get_name(self.var)
+        return get_temp_var_name(self.var)
 
 
 DEF CONST_POOL_SIZE = 4096
+cdef __const_pool = [None] * CONST_POOL_SIZE
+cdef __const_pool_lock = threading.Lock()
 
 
-class ExprConst(Expr):
-    IS_CONST = True
-    _pool = [None] * CONST_POOL_SIZE
-    _pool_lock = threading.Lock()
-    __slots__ = 'optimized', 'rtype', 'value'
-
-    def __new__(cls, uint32_t type, value):
-        if type == 32 and 0 <= value < CONST_POOL_SIZE:
-            self = cls._pool[value]
-            if self is None:
-                with cls._pool_lock:
-                    self = cls._pool[value]
-                    if self is None:
-                        self = super(ExprConst, cls).__new__(cls)
-                        self.rtype = type
-                        self.value = int(value)
-                        self.optimized = self
-                        cls._pool[value] = self
-            return self
-
-        self = super(ExprConst, cls).__new__(cls)
-        self.rtype = type
-        self.value = int(value)
-        self.optimized = self
+cdef Const(uint32_t type, value):
+    if type == 32 and 0 <= value < CONST_POOL_SIZE:
+        self = __const_pool[value]
+        if self is None:
+            with __const_pool_lock:
+                self = __const_pool[value]
+                if self is None:
+                    self = ExprConst(type, value)
+                    __const_pool[value] = self
         return self
+    return ExprConst(type, value)
 
-    def __str(self, omit_type=False):
+
+@cython.final
+cdef class ExprConst(Expr):
+    IS_CONST = True
+
+    def __init__(self, uint32_t type, value):
+        super().__init__(type)
+        self.value = value
+        self._optimized = self
+
+    cdef __str(self, c_bool omit_type):
         value = self.value
-        rtype = self.rtype
+        cdef uint32_t rtype = self.rtype
         if rtype % 8 == 0:
             value &= type_max(rtype)
         if -16 <= value <= 16:
@@ -342,64 +322,74 @@ class ExprConst(Expr):
         else:
             value_s = hex(value)
         if not omit_type:
-            if self.rtype < 64:
+            if rtype < 64:
                 value_s += 'u'
             else:
                 value_s = f'UINT64_C({value_s})'
         return value_s
 
     def __str__(self):
-        return self.__str()
+        return self.__str(omit_type=False)
 
     def __format__(self, spec):
         return self.__str(omit_type='U' in spec)
 
-    @staticmethod
-    def combine(const_exprs):
-        """Combine multiple ExprConst into one."""
-        if len(const_exprs) == 1:
-            expr = const_exprs[0]
-            if expr.value:
-                return expr
-            else:
-                return None
-
-        const_value = 0
-        const_type = 32
-        for expr in const_exprs:
-            const_value += expr.value
-            const_type = max(const_type, expr.rtype)
-        if const_value == 0:
-            return None
-        else:
-            return ExprConst(const_type, const_value)
-
-    def __neg__(self):
-        return Const(self.rtype, -self.value)
+    cdef ExprConst negated(self):
+        return ExprConst(self.rtype, -self.value)
 
     def _complicated(self, threshold):
         return False
 
-    @property
-    def overhead(self):
+    cdef uint32_t overhead(self):
         return (<int>self.rtype > 32) + 1
 
 
-class ExprAdd(Expr):
+@cython.boundscheck(False)
+cdef ExprConst CombineConsts(const_exprs):
+    """Combine multiple ExprConst into one."""
+    cdef ExprConst expr
+    if len(const_exprs) == 1:
+        expr = const_exprs[0]
+        if expr.value == 0:
+            return None
+        else:
+            return expr
+
+    const_value = 0
+    cdef uint32_t const_type = 32
+    for expr in const_exprs:
+        const_value += expr.value
+        const_type = max(const_type, expr.rtype)
+    if const_value == 0:
+        return None
+    else:
+        return ExprConst(const_type, const_value)
+
+
+@cython.final
+cdef class ExprAdd(Expr):
     IS_ADD = True
 
-    def __init__(self, exprs, const_):
-        super().__init__()
-        assert const_ is None or const_.IS_CONST
-        self.exprs = tuple([expr.optimized for expr in exprs])
-        self.const = const_
-        rtype = max([x.rtype for x in self.children])
-        self.rtype = max(rtype, 31)  # C type-promotion rule
+    def __init__(self, exprs, ExprConst const_):
+        cdef uint32_t rtype = 0
+        if const_ is not None:
+            if const_.value == 0:
+                const_ = None
+            else:
+                rtype = max(rtype, const_.rtype)
+        cdef Expr x
+        for x in exprs:
+            rtype = max(rtype, x.rtype)
+        if len(exprs) + <int>(const_ is not None) > 1:
+            rtype = max(rtype, 31)  # C type-promotion rule
+        super().__init__(rtype)
+        self.exprs = tuple([(<Expr>x).optimize() for x in exprs])
+        self.konst = const_
 
     def __str__(self):
         res = ' + '.join(map(str, self.exprs))
-        const_ = self.const
-        if const_:
+        cdef ExprConst const_ = self.konst
+        if const_ is not None:
             left_rtype = max(expr.rtype for expr in self.exprs)
             const_value = const_.value
             const_rtype = const_.rtype
@@ -416,39 +406,38 @@ class ExprAdd(Expr):
                     res += f' - {abs_const}'
         return '(' + res + ')'
 
-    @property
-    def children(self):
-        const_ = self.const
-        if const_:
+    cdef children(self):
+        cdef ExprConst const_ = self.konst
+        if const_ is not None:
             return self.exprs + (const_,)
         else:
             return self.exprs
 
-    @cutils.cached_property
     @cython.boundscheck(False)
     @cython.wraparound(False)
-    def optimized(self):
+    cdef Expr do_optimize(self):
         exprs = []
         const_exprs = []
 
-        if self.const:
-            const_exprs.append(self.const)
+        if self.konst:
+            const_exprs.append(self.konst)
 
+        cdef Expr expr
         for expr in self.exprs:
-            expr = expr.optimized
+            expr = expr.optimize()
             if expr.IS_ADD:
                 exprs.extend(expr.exprs)
-                if expr.const:
-                    const_exprs.append(expr.const)
+                if expr.konst:
+                    const_exprs.append(expr.konst)
             elif expr.IS_CONST:
                 const_exprs.append(expr)
             else:
                 exprs.append(expr)
 
-        const_ = ExprConst.combine(const_exprs)
+        cdef ExprConst const_ = CombineConsts(const_exprs)
 
         # (a ? c1 : c2) + c3 ==> (a ? c1 + c3 : c2 + c3)
-        if const_:
+        if const_ is not None:
             const_value = const_.value
             for i, expr in enumerate(exprs):
                 if expr.IS_COND and \
@@ -457,16 +446,22 @@ class ExprAdd(Expr):
                         expr.cond,
                         Const(self.rtype, expr.exprT.value + const_value),
                         Const(self.rtype, expr.exprF.value + const_value))
-                    exprs[i] = expr.optimized
+                    exprs[i] = expr.optimize()
                     const_ = None
                     break
 
-        if len(exprs) == 1 and not const_:
+        if len(exprs) == 1 and const_ is None:
             return exprs[0]
+
+        if len(exprs) == 0:
+            if const_ is not None:
+                return const_
+            else:
+                return ExprConst(self.rtype, 0)
 
         cdef Py_ssize_t n_exprs
         cdef Py_ssize_t j
-        if const_ is self.const:
+        if const_ is self.konst:
             self_exprs = self.exprs
             n_exprs = len(exprs)
             if n_exprs == len(self_exprs):
@@ -478,7 +473,7 @@ class ExprAdd(Expr):
                 else:
                     return self
 
-        return ExprAdd(exprs, const_).force_optimized
+        return ExprAdd(exprs, const_).force_optimized()
 
     def extract_subexprs(self, threshold, callback, allow_extract_table):
         exprs = []
@@ -488,25 +483,22 @@ class ExprAdd(Expr):
                             expr._complicated(threshold))
             exprs.append(expr)
         self.exprs = tuple(exprs)
-        # Don't bother to do callback on self.const; it's never required
+        # Don't bother to do callback on self.konst; it's never required
 
-    @cutils.cached_property
-    def overhead(self):
-        n = len(self.exprs)
-        if self.const:
+    cdef uint32_t overhead(self):
+        cdef int n = len(self.exprs)
+        if self.konst:
             n += 1
         return (n - 1) * 2
 
 
-class ExprBinary(Expr):
-    def __init__(self, left, right, rtype=None):
-        super().__init__()
-        self.left = left = left.optimized
-        self.right = right = right.optimized
-        self.rtype = rtype or max(31, left.rtype, right.rtype)
+cdef class ExprBinary(Expr):
+    def __init__(self, Expr left, Expr right, uint32_t rtype=0):
+        self.left = left = left.optimize()
+        self.right = right = right.optimize()
+        super().__init__(rtype or max(31, left.rtype, right.rtype))
 
-    @property
-    def children(self):
+    cdef children(self):
         return self.left, self.right
 
     def extract_subexprs(self, threshold, callback, allow_extract_table):
@@ -516,20 +508,22 @@ class ExprBinary(Expr):
         self.right = callback(self.right, allow_extract_table,
                               self.right._complicated(threshold))
 
-    overhead = 2
+    cdef uint32_t overhead(self):
+        return 2
 
 
-class ExprShift(ExprBinary):
-    def __init__(self, left, right):
+cdef class ExprShift(ExprBinary):
+    def __init__(self, Expr left, Expr right):
         super().__init__(left, right, max(31, left.rtype))
 
 
-class ExprLShift(ExprShift):
+@cython.final
+cdef class ExprLShift(ExprShift):
     IS_LSHIFT = True
 
     def __str__(self):
         # Avoid the spurious 'u' after the constant
-        right = self.right
+        cdef Expr right = self.right
         if right.IS_CONST:
             right_value = right.value
             if right_value in (1, 2, 3):
@@ -538,77 +532,87 @@ class ExprLShift(ExprShift):
         else:
             return '({} << {})'.format(self.left, right)
 
-    @cutils.cached_property
-    def optimized(self):
-        left = self.left
-        right = self.right
+    cdef Expr do_optimize(self):
+        cdef Expr left = self.left
+        cdef Expr right = self.right
+        cdef Expr expr
 
-        right_const = right.IS_CONST
+        cdef PyTypeObject* left_type = Py_TYPE(left)
+        cdef PyTypeObject* right_type = Py_TYPE(right)
+        cdef c_bool right_const = (right_type == <PyTypeObject*>ExprConst)
 
-        if right_const and left.IS_CONST:
-            return Const(self.rtype, left.value << right.value)
+        if right_const and left_type == <PyTypeObject*>ExprConst:
+            return Const(self.rtype,
+                         (<ExprConst>left).value << (<ExprConst>right).value)
 
         # "(a & c1) << c2" ==> (a << c2) & (c1 << c2) (where c2 <= 3)
         # This takes advantage of x86's LEA instruction
-        if right_const and right.value <= 3 and \
+        if right_const and (<ExprConst>right).value <= 3 and \
                 left.IS_AND and \
-                left.right.IS_CONST:
-            expr_left = ExprLShift(left.left, right)
-            expr_right = Const(left.right.rtype,
-                               left.right.value << right.value)
-            return ExprAnd(expr_left, expr_right).optimized
+                (<ExprAnd>left).right.IS_CONST:
+            expr_left = ExprLShift((<ExprAnd>left).left, right)
+            expr_right = Const(
+                (<ExprConst>(<ExprAnd>left).right).rtype,
+                (<ExprConst>(<ExprAnd>left).right).value <<
+                    (<ExprConst>right).value)
+            return ExprAnd(expr_left, expr_right).optimize()
 
         # PREDICATE << c  ==>  PREDICATE ? (1 << c) : 0
-        if right_const and left.is_predicate:
+        if right_const and left.is_predicate():
             expr = ExprCond(left,
-                            Const(self.rtype, 1 << right.value),
+                            Const(self.rtype, 1 << (<ExprConst>right).value),
                             Const(self.rtype, 0))
-            return expr.optimized
+            return expr.optimize()
 
         # (cond ? c1 : c2) << c3 ==> (cond ? c1 << c3 : c2 << c3)
         if right_const and \
                 left.IS_COND and \
-                left.exprT.IS_CONST and \
-                left.exprF.IS_CONST:
+                (<ExprCond>left).exprT.IS_CONST and \
+                (<ExprCond>left).exprF.IS_CONST:
             expr = ExprCond(left.cond,
-                            ExprLShift(left.exprT, right),
-                            ExprLShift(left.exprF, right))
-            return expr.optimized
+                            ExprLShift((<ExprCond>left).exprT, right),
+                            ExprLShift((<ExprCond>left).exprF, right))
+            return expr.optimize()
 
         # (a >> c1) << c2
         # (a << (c2 - c1)) & ~((1 << c2) - 1)   (c2 > c1)
         # (a >> (c1 - c2)) & ~((1 << c2) - 1)   (c2 <= c1)
         if right_const and \
                 left.IS_RSHIFT and \
-                left.right.IS_CONST:
-            c2 = right.value
-            c1 = left.right.value
+                (<ExprRShift>left).right.IS_CONST:
+            c2 = (<ExprConst>right).value
+            c1 = (<ExprConst>(<ExprRShift>left).right).value
             if c2 > c1:
-                expr = ExprLShift(left.left, Const(32, c2 - c1))
+                expr = ExprLShift((<ExprRShift>left).left, Const(32, c2 - c1))
             elif c2 == c1:
-                expr = left.left
+                expr = (<ExprRShift>left).left
             else:
-                expr = ExprRShift(left.left, Const(32, c1 - c2))
-            and_value = ((1 << c2) - 1) ^ ((1 << expr.rtype) - 1)
+                expr = ExprRShift((<ExprRShift>left).left, Const(32, c1 - c2))
+            and_value = ((1 << c2) - 1) ^ ((2ull << (expr.rtype - 1)) - 1)
             expr = ExprAnd(expr, Const(expr.rtype, and_value))
-            return expr.optimized
+            return expr.optimize()
 
         # "(a + c1) << c2" ==> (a << c2) + (c1 << c2)
         if right_const and \
-                left.IS_ADD and len(left.exprs) == 1 and \
-                left.const:
-            expr_left = ExprLShift(left.exprs[0], right)
-            expr_right = Const(left.const.rtype,
-                               left.const.value << right.value)
-            return ExprAdd((expr_left,), expr_right).optimized
+                left.IS_ADD and len((<ExprAdd>left).exprs) == 1 and \
+                (<ExprAdd>left).konst is not None:
+            expr_left = ExprLShift((<ExprAdd>left).exprs[0], right)
+            expr_right = Const((<ExprAdd>left).konst.rtype,
+                               (<ExprAdd>left).konst.value << right.value)
+            return ExprAdd((expr_left,), expr_right).optimize()
 
         return self
 
 
-class ExprRShift(ExprShift):
+cdef ExprLShift LShift(a, b):
+    return ExprLShift(exprize(a), exprize(b))
+
+
+@cython.final
+cdef class ExprRShift(ExprShift):
     IS_RSHIFT = True
 
-    def __init__(self, left, right):
+    def __init__(self, Expr left, Expr right):
         # Always logical shift
         if left.rtype < 32 or left.rtype == 63:
             left = ExprCast(max(32, left.rtype + 1), left)
@@ -624,26 +628,17 @@ class ExprRShift(ExprShift):
 
         return '({} >> {})'.format(self.left, right_s)
 
-    @cutils.cached_property
-    def optimized(self):
-        '''
-        >>> expr = (Add(FixedVar(32, 'c'), 30) >> 2)
-        >>> str(expr.optimized)
-        '(((c + 2) >> 2) + 7)'
-        >>> expr = (Add(FixedVar(32, 'c'), FixedVar(32, 'd'), -30) >> 2)
-        >>> str(expr.optimized)
-        '(((c + d + 2) >> 2) - 8)'
-        '''
-        left = self.left
-        right = self.right
+    cdef Expr do_optimize(self):
+        cdef Expr left = self.left
+        cdef Expr right = self.right
 
-        right_const = right.IS_CONST
+        cdef c_bool right_const = right.IS_CONST
 
         # (a + c1) >> c2
         # Convert to ((a + c1 % (1 << c2)) >> c2) + (c1 >> c2).
-        if right_const and left.IS_ADD and left.const:
-            ctype = left.const.rtype
-            c1 = left.const.value
+        if right_const and left.IS_ADD and (<ExprAdd>left).konst:
+            ctype = (<ExprAdd>left).konst.rtype
+            c1 = (<ExprAdd>left).konst.value
             c2 = right.value
 
             if c1 >> c2:
@@ -654,37 +649,40 @@ class ExprRShift(ExprShift):
                     compensation += 1
                     remainder -= 1 << c2
 
-                expr = ExprAdd(left.exprs, Const(ctype, remainder))
+                expr = ExprAdd((<ExprAdd>left).exprs, Const(ctype, remainder))
                 expr = ExprRShift(expr, Const(32, c2))
                 expr = ExprAdd((expr,), Const(ctype, compensation))
-                return expr.optimized
+                return expr.optimize()
 
         # (a >> c1) >> c2 ==> a >> (c1 + c2)
         if right_const and \
                 left.IS_RSHIFT and \
                 left.right.IS_CONST:
-            right = Add(right, left.right).optimized
+            right = Add(right, left.right).optimize()
             left = left.left
-            return ExprRShift(left, right).optimized
+            return ExprRShift(left, right).optimize()
 
         return self
 
 
-class ExprMul(ExprBinary):
+cdef ExprRShift RShift(a, b):
+    return ExprRShift(exprize(a), exprize(b))
+
+
+@cython.final
+cdef class ExprMul(ExprBinary):
     def __str__(self):
-        left = self.left
-        right = self.right
+        cdef Expr left = self.left
+        cdef Expr right = self.right
         if left.rtype >= right.rtype:
             return f'({left} * {right:U})'
         else:
             return f'({left} * {right})'
 
-    @cutils.cached_property
-    def optimized(self):
-        left = self.left
-        right = self.right
-
-        right_const = right.IS_CONST
+    cdef Expr do_optimize(self):
+        cdef Expr left = self.left
+        cdef Expr right = self.right
+        cdef c_bool right_const = right.IS_CONST
 
         # Both constants
         if right_const and left.IS_CONST:
@@ -692,7 +690,7 @@ class ExprMul(ExprBinary):
 
         # Put constant on the right side
         if not right_const and left.IS_CONST:
-            return ExprMul(right, left).optimized
+            return ExprMul(right, left).optimize()
 
         if right_const:
             # Strength reduction (* => <<)
@@ -703,13 +701,13 @@ class ExprMul(ExprBinary):
                 return left
             elif is_pow2(rv):
                 expr = ExprLShift(left, Const(32, rv.bit_length() - 1))
-                return expr.optimized
+                return expr.optimize()
 
             # (a + c1) * c2 ==> (a * c2 + c1 * c2)
-            if left.IS_ADD and len(left.exprs) == 1 and left.const:
+            if left.IS_ADD and len(left.exprs) == 1 and left.konst:
                 expr_left = ExprMul(left.exprs[0], right)
-                expr_right = ExprMul(left.const, right)
-                return ExprAdd((expr_left, expr_right), None).optimized
+                expr_right = ExprMul(left.konst, right)
+                return ExprAdd((expr_left, expr_right), None).optimize()
 
             # (cond ? c1 : c2) * c3 ==> (cond ? c1 * c3 : c2 * c3)
             if left.IS_COND and \
@@ -718,42 +716,43 @@ class ExprMul(ExprBinary):
                 expr = ExprCond(left.cond,
                                 ExprMul(left.exprT, right),
                                 ExprMul(left.exprF, right))
-                return expr.optimized
+                return expr.optimize()
 
             # PREDICATE * c ==> PREDICATE ? c : 0
-            if left.is_predicate:
-                return ExprCond(left, right, Const(self.rtype, 0)).optimized
+            if left.is_predicate():
+                return ExprCond(left, right, Const(self.rtype, 0)).optimize()
 
         return self
 
-    @cutils.cached_property
-    def overhead(self):
+    cdef uint32_t overhead(self):
         if self.left.IS_CONST or self.right.IS_CONST:
             return 2
         else:
             return 4
 
 
-class ExprDiv(ExprBinary):
-    IS_DIV = True
+cdef ExprMul Mul(a, b):
+    return ExprMul(exprize(a), exprize(b))
 
-    def __init__(self, left, right):
+
+@cython.final
+cdef class ExprDiv(ExprBinary):
+    def __init__(self, Expr left, Expr right):
         if left.rtype < 32 or left.rtype == 63:
             left = ExprCast(max(32, left.rtype + 1), left)
         super().__init__(left, right)
 
     def __str__(self):
-        left = self.left
-        right = self.right
+        cdef Expr left = self.left
+        cdef Expr right = self.right
         if left.rtype >= right.rtype:
             return f'({left} / {right:U})'
         else:
             return f'({left} / {right})'
 
-    @cutils.cached_property
-    def optimized(self):
-        left = self.left
-        right = self.right
+    cdef Expr do_optimize(self):
+        cdef Expr left = self.left
+        cdef Expr right = self.right
         if right.IS_CONST:
             rv = right.value
             if rv == 0:
@@ -762,54 +761,65 @@ class ExprDiv(ExprBinary):
                 return left
             elif is_pow2(rv):
                 expr = ExprRShift(left, Const(32, rv.bit_length() - 1))
-                return expr.optimized
+                return expr.optimize()
 
         return self
 
-    overhead = 7
+    cdef uint32_t overhead(self):
+        return 7
 
 
-class ExprMod(ExprBinary):
+cdef ExprDiv Div(a, b):
+    return ExprDiv(exprize(a), exprize(b))
+
+
+@cython.final
+cdef class ExprMod(ExprBinary):
     IS_MOD = True
 
     def __str__(self):
-        left = self.left
-        right = self.right
+        cdef Expr left = self.left
+        cdef Expr right = self.right
         if left.rtype >= right.rtype:
             return f'({left} % {right:U})'
         else:
             return f'({left} % {right})'
 
-    @cutils.cached_property
-    def optimized(self):
-        right = self.right
+    cdef Expr do_optimize(self):
+        cdef Expr right = self.right
         if right.IS_CONST:
             value = right.value
             if value and (value & (value - 1)) == 0:
                 return ExprAnd(self.left,
-                               Const(right.rtype, value - 1)).optimized
+                               Const(right.rtype, value - 1)).optimize()
         return self
 
-    overhead = 7
+    cdef uint32_t overhead(self):
+        return 7
 
 
-class ExprAnd(ExprBinary):
+@cython.final
+cdef class ExprAnd(ExprBinary):
     IS_AND = True
 
+    def __init__(self, Expr left, Expr right):
+        if right.IS_CONST and (<ExprConst>right).value == 0:
+            raise ValueError(f'{left} & {right}')
+        super().__init__(left, right)
+
     def __str__(self):
-        left = self.left
-        right = self.right
+        cdef Expr left = self.left
+        cdef Expr right = self.right
         if left.rtype >= right.rtype:
             return f'({left} & {right:U})'
         else:
             return f'({left} & {right})'
 
-    @cutils.cached_property
-    def optimized(self):
-        left = self.left
-        right = self.right
+    cdef Expr do_optimize(self):
+        cdef Expr left = self.left
+        cdef Expr right = self.right
 
-        right_const = right.IS_CONST
+        cdef c_bool right_const = right.IS_CONST
         right_value = None
 
         if right_const:
@@ -818,17 +828,17 @@ class ExprAnd(ExprBinary):
         # (a + c1) & c2 ==> (a + c1') & c2
         # where c1' = c1 with high bits cleared
         if right_const and right_value and \
-                left.IS_ADD and left.const:
+                left.IS_ADD and left.konst:
             rv = right_value
             bt = rv.bit_length() + 1
-            c1 = left.const.value
+            c1 = left.konst.value
             c1p = c1 & ((1 << bt) - 1)
             # If its high bit is set, make it negative
             if c1p & (1 << (bt - 1)):
                 c1p |= ~((1 << bt) - 1)
             if c1p != c1:
-                left = ExprAdd(left.exprs, Const(left.const.rtype, c1p))
-                return ExprAnd(left, right).optimized
+                left = ExprAdd(left.exprs, Const(left.konst.rtype, c1p))
+                return ExprAnd(left, right).optimize()
 
         # (a & c1) & c2 ==> a & (c1 & c2)
         if right_const and \
@@ -838,7 +848,7 @@ class ExprAnd(ExprBinary):
             c2 = right_value
             expr = ExprAnd(left.left,
                            Const(max(left.right.rtype, right.rtype), c1 & c2))
-            return expr.optimized
+            return expr.optimize()
 
         # (a & 0xff) ==> (uint8_t)a
         # (a & 0xffff) ==> (uint16_t)a
@@ -846,19 +856,17 @@ class ExprAnd(ExprBinary):
             # Must cast back
             if right_value == 0xff:
                 expr = ExprCast(self.rtype, ExprCast(8, left))
-                return expr.optimized
+                return expr.optimize()
             elif right_value == 0xffff:
                 expr = ExprCast(self.rtype, ExprCast(16, left))
-                return expr.optimized
+                return expr.optimize()
 
         return self
 
-    @cutils.cached_property
-    def is_predicate(self):
+    cdef c_bool is_predicate(self):
         return self.right.IS_CONST and self.right.value == 1
 
-    @cutils.cached_property
-    def overhead(self):
+    cdef uint32_t overhead(self):
         if self.left.IS_RSHIFT and self.right.IS_CONST and \
                 self.right.value == 1:
             # Bit-test, reduce overhead counting
@@ -866,7 +874,12 @@ class ExprAnd(ExprBinary):
         return 2
 
 
-class ExprCompare(ExprBinary):
+cdef ExprAnd And(a, b):
+    return ExprAnd(exprize(a), exprize(b))
+
+
+@cython.final
+cdef class ExprCompare(ExprBinary):
     IS_COMPARE = True
 
     __negate = {
@@ -878,7 +891,11 @@ class ExprCompare(ExprBinary):
         '<=': '>',
     }
 
-    is_predicate = True
+    cdef c_bool is_predicate(self):
+        return False
+
+    def __cinit__(self, *args, **kwargs):
+        self._negated = None
 
     def __init__(self, left, compare, right):
         super().__init__(left, right, 31)
@@ -887,18 +904,20 @@ class ExprCompare(ExprBinary):
     def __str__(self):
         return f'({self.left:U} {self.compare} {self.right:U})'
 
-    @cutils.cached_property
-    def negated(self):
-        neg = ExprCompare(self.left, self.__negate[self.compare], self.right)
-        neg.__dict__['negated'] = self
+    cdef ExprCompare negated(self):
+        cdef ExprCompare neg = self._negated
+        if neg is None:
+            neg = ExprCompare(self.left, self.__negate[self.compare],
+                              self.right)
+            neg._negated = self
+            self._negated = neg
         return neg
 
-    @cutils.cached_property
-    def optimized(self):
-        left = self.left
-        right = self.right
+    cdef Expr do_optimize(self):
+        cdef Expr left = self.left
+        cdef Expr right = self.right
 
-        right_const = right.IS_CONST
+        cdef c_bool right_const = right.IS_CONST
 
         # (a >> c1) == c2
         # a >= (c2 << c1) && a < ((c2 + 1) << c1)
@@ -913,7 +932,7 @@ class ExprCompare(ExprBinary):
             if ((c2 + 1) << c1) <= 2**32:
                 expr = ExprAdd((left.left,), Const(32, -(c2 << c1)))
                 expr = ExprCompare(expr, '<', Const(32, 1 << c1))
-                return expr.optimized
+                return expr.optimize()
 
         # (a >> c1) < c2
         # a < (c2 << c1)
@@ -926,45 +945,46 @@ class ExprCompare(ExprBinary):
             c2 = right.value
             if (c2 << c1) < 2**32:
                 expr = ExprCompare(left.left, '<', Const(32, c2 << c1))
-                return expr.optimized
+                return expr.optimize()
 
         return self
 
 
-class ExprCast(Expr):
+cdef ExprCompare Eq(a, b): return ExprCompare(exprize(a), '==', exprize(b))
+cdef ExprCompare Ne(a, b): return ExprCompare(exprize(a), '!=', exprize(b))
+cdef ExprCompare Gt(a, b): return ExprCompare(exprize(a), '>', exprize(b))
+cdef ExprCompare Ge(a, b): return ExprCompare(exprize(a), '>=', exprize(b))
+cdef ExprCompare Lt(a, b): return ExprCompare(exprize(a), '<', exprize(b))
+cdef ExprCompare Le(a, b): return ExprCompare(exprize(a), '<=', exprize(b))
+
+
+@cython.final
+cdef class ExprCast(Expr):
     IS_CAST = True
-    __slots__ = 'rtype', 'value', '__optimized'
 
-    def __new__(cls, type, value):
-        self = super(ExprCast, cls).__new__(cls)
-        self.rtype = type
-        self.value = value.optimized
-        self.__optimized = None
-        return self
+    def __init__(self, uint32_t type, Expr value):
+        super().__init__(type)
+        self.value = value.optimize()
 
     def __str__(self):
         return '{}({})'.format(type_name(self.rtype),
                                utils.trim_brackets(str(self.value)))
 
-    @property
-    def children(self):
+    cdef children(self):
         return self.value,
 
-    @property
-    def optimized(self):
-        res = self.__optimized
-        if res is None:
-            rtype = self.rtype
-            value = self.value
+    cdef Expr do_optimize(self):
+        cdef uint32_t rtype = self.rtype
+        cdef Expr value = self.value
+        cdef Expr res
 
-            if value.rtype == rtype:
-                res = value
-            elif value.IS_CAST and rtype <= value.rtype:
-                res = ExprCast(rtype, value.value).optimized
-            else:
-                res = self
+        if value.rtype == rtype:
+            res = value.optimize()
+        elif value.IS_CAST and rtype <= value.rtype:
+            res = ExprCast(rtype, value.value).optimize()
+        else:
+            res = self
 
-            self.__optimized = res
         return res
 
     def extract_subexprs(self, threshold, callback, allow_extract_table):
@@ -972,44 +992,38 @@ class ExprCast(Expr):
         self.value = callback(self.value, allow_extract_table,
                               self.value._complicated(threshold))
 
-    @property
-    def is_predicate(self):
-        return self.value.is_predicate
+    cdef c_bool is_predicate(self):
+        return self.value.is_predicate()
 
-    overhead = 0
+    # overhead = 0
 
 
-class ExprNeg(Expr):
-    __slots__ = 'rtype', 'value', '__optimized'
+cdef ExprCast Cast(uint32_t type, value):
+    return ExprCast(type, exprize(value))
 
-    def __new__(cls, value):
-        self = super(ExprNeg, cls).__new__(cls)
-        self.rtype = value.rtype
+
+@cython.final
+cdef class ExprNeg(Expr):
+    def __init__(self, Expr value):
+        super().__init__(max(31, value.rtype))
         self.value = value
-        self.__optimized = None
-        return self
 
     def __str__(self):
         value_s = utils.trim_brackets(str(self.value))
         return f'-({value_s})'
 
-    @property
-    def children(self):
+    cdef children(self):
         return self.value,
 
-    @property
-    def optimized(self):
-        res = self.__optimized
-        if res is None:
-            value = self.value
-            if type(value) is ExprNeg:
-                res = value.value.optimized
-            elif type(value) is ExprConst:
-                res = -value.value
-            else:
-                res = self
-            self.__optimized = res
-
+    cdef Expr do_optimize(self):
+        cdef Expr value = self.value
+        cdef Expr res
+        if type(value) is ExprNeg:
+            res = (<ExprNeg>value).value.optimize()
+        elif type(value) is ExprConst:
+            res = (<ExprConst>value).negated().optimize()
+        else:
+            res = self
         return res
 
     def extract_subexprs(self, threshold, callback, allow_extract_table):
@@ -1017,24 +1031,27 @@ class ExprNeg(Expr):
         self.value = callback(self.value, allow_extract_table,
                               self.value._complicated(threshold))
 
-    overhead = 0
+    # overhead = 0
 
 
-class ExprCond(Expr):
+cdef ExprNeg Neg(expr):
+    return ExprNeg(exprize(expr))
+
+
+@cython.final
+cdef class ExprCond(Expr):
     IS_COND = True
 
-    def __init__(self, cond, exprT, exprF):
-        super().__init__()
-        self.cond = cond.optimized
-        self.exprT = exprT.optimized
-        self.exprF = exprF.optimized
-        self.rtype = max(31, self.exprT.rtype, self.exprF.rtype)
+    def __init__(self, Expr cond, Expr exprT, Expr exprF):
+        self.cond = cond.optimize()
+        self.exprT = exprT.optimize()
+        self.exprF = exprF.optimize()
+        super().__init__(max(31, self.exprT.rtype, self.exprF.rtype))
 
     def __str__(self):
         return '({} ? {} : {})'.format(self.cond, self.exprT, self.exprF)
 
-    @property
-    def children(self):
+    cdef children(self):
         return self.cond, self.exprT, self.exprF
 
     def extract_subexprs(self, threshold, callback, allow_extract_table):
@@ -1054,29 +1071,33 @@ class ExprCond(Expr):
         self.exprF = callback(self.exprF, allow_extract_table,
                               self.exprF._complicated(threshold))
 
-    @cutils.cached_property
-    def optimized(self):
-        cond = self.cond
-        exprT = self.exprT
-        exprF = self.exprF
+    cdef Expr do_optimize(self):
+        cdef Expr cond = self.cond
+        cdef Expr exprT = self.exprT
+        cdef Expr exprF = self.exprF
 
         # cast(PREDICATE) ? T : F ==> (PREDICATE) ? T : F
-        while cond.IS_CAST and cond.value.is_predicate:
+        while cond.IS_CAST and (<ExprCast>cond).value.is_predicate():
             cond = cond.value
         if cond is not self.cond:
-            return ExprCond(cond, exprT, exprF).optimized
+            return ExprCond(cond, exprT, exprF).optimize()
 
         # PREDICATE ? 1 : 0 ==> Cast(PREDICATE)
-        if (cond.is_predicate and exprT.IS_CONST and exprF.IS_CONST and
-                exprT.value == 1 and exprF.value == 0):
-            return ExprCast(self.rtype, cond).optimized
+        if (cond.is_predicate() and exprT.IS_CONST and exprF.IS_CONST and
+                (<ExprConst>exprT).value == 1 and
+                (<ExprConst>exprF).value == 0):
+            return ExprCast(self.rtype, cond).optimize()
 
         # cond is (** != 0) or (** == 0)
-        if cond.IS_COMPARE and cond.right.IS_CONST and cond.right.value == 0:
-            if cond.compare == '!=':
-                return ExprCond(cond.left, exprT, exprF).optimized
-            elif cond.compare == '==':
-                return ExprCond(cond.left, exprF, exprT).optimized
+        cdef ExprCompare cond_comp
+        if cond.IS_COMPARE:
+            cond_comp = <ExprCompare>cond
+        if cond.IS_COMPARE and cond_comp.right.IS_CONST and \
+                cond_comp.right.value == 0:
+            if cond_comp.compare == '!=':
+                return ExprCond(cond_comp.left, exprT, exprF).optimize()
+            elif cond_comp.compare == '==':
+                return ExprCond(cond_comp.left, exprF, exprT).optimize()
 
         # Sometimes we might want to negate thecomparator
         if cond.IS_COMPARE:
@@ -1086,28 +1107,33 @@ class ExprCond(Expr):
             #     the constant to left to increase readability.
             if (
                     (exprT.IS_CONST and exprF.IS_CONST and
-                     exprT.value < exprF.value) or
+                     (<ExprConst>exprT).value < (<ExprConst>exprF).value) or
                     (exprF.IS_CONST and not exprT.IS_CONST)):
-                return ExprCond(cond.negated, exprF, exprT).optimized
+                return ExprCond(cond_comp.negated(),
+                                exprF, exprT).optimize()
 
         return self
 
-    overhead = 3
+    cdef uint32_t overhead(self):
+        return 3
 
 
-class ExprTable(Expr):
-    has_table = True
-    __slots__ = 'rtype', 'name', 'values', 'var', 'offset', '__optimized'
+cdef ExprCond Cond(cond, exprT, exprF):
+    return ExprCond(exprize(cond), exprize(exprT), exprize(exprF))
 
-    def __new__(cls, type, name, values, var, offset):
-        self = super(ExprTable, cls).__new__(cls)
-        self.rtype = type
+
+@cython.final
+cdef class ExprTable(Expr):
+    def __cinit__(self, *args, **kwargs):
+        self._has_table = 1
+
+    def __init__(self, uint32_t type, str name, values, Expr var,
+                 int32_t offset):
+        super().__init__(type)
         self.name = name
         self.values = values
-        self.var = var.optimized
+        self.var = var.optimize()
         self.offset = offset
-        self.__optimized = None
-        return self
 
     def __str__(self):
         if self.offset > 0:
@@ -1127,7 +1153,7 @@ class ExprTable(Expr):
             var = utils.trim_brackets(str(self.var))
             return '{}[{}]'.format(self.name, var)
 
-    def statics(self, vs):
+    cdef statics(self, vs):
         id_ = id(self)
         if id_ in vs:
             return ''
@@ -1164,32 +1190,26 @@ class ExprTable(Expr):
         res_append('};\n\n')
         return ''.join(res)
 
-    @property
-    def children(self):
+    cdef children(self):
         return self.var,
 
-    @property
-    def optimized(self):
-        res = self.__optimized
-        if res is None:
-            self.__optimized = res = self.__optimized_impl()
-        return res
-
-    def __optimized_impl(self):
-        var = self.var
+    cdef Expr do_optimize(self):
+        cdef Expr var = self.var
         # If var contains a cast, it's usually unnecessary
-        while var.IS_CAST and var.value.rtype < var.rtype:
-            var = var.value.optimized
+        while var.IS_CAST and (<ExprCast>var).value.rtype < var.rtype:
+            var = (<ExprCast>var).value.optimize()
         if var is not self.var:
             return ExprTable(self.rtype, self.name, self.values, var,
-                             self.offset).optimized
+                             self.offset).optimize()
 
         # Absorb constants into offset
-        if var.IS_ADD and var.const:
-            offset = self.offset - var.const.value
-            var = ExprAdd(var.exprs, None).optimized
+        if var.IS_ADD and var.konst:
+            offset = self.offset - var.konst.value
+            var = ExprAdd((<ExprAdd>var).exprs, None).optimize()
+            # Occasionally we get very big or small offset.
+            # Just cast it to int64_t and truncate to int32_t
             return ExprTable(self.rtype, self.name, self.values, var,
-                             offset).optimized
+                             <int32_t><int64_t>offset).optimize()
 
         return self
 
@@ -1202,10 +1222,10 @@ class ExprTable(Expr):
         return True
 
     # Bytes taken by the table is independently calculated
-    overhead = 2
+    cdef uint32_t overhead(self):
+        return 2
 
-    @property
-    def static_bytes(self):
+    cdef uint32_t static_bytes(self):
         return self.values.size * type_bytes(self.rtype)
 
 
@@ -1219,52 +1239,37 @@ cdef exprize(expr):
         return expr
 
 
-FixedVar = ExprFixedVar
-
-
-TempVar = ExprTempVar
-
-
-Const = ExprConst
-
-
-def Add(*in_exprs):
+cdef Expr AddMany(in_exprs):
     exprs = []
     const_exprs = []
 
-    _ExprConst = ExprConst
-    _ExprAdd = ExprAdd
-
     cdef PyTypeObject* etype
 
-    for expr in in_exprs:
-        expr = exprize(expr)
+    cdef Expr expr
+    for x in in_exprs:
+        expr = exprize(x)
         etype = Py_TYPE(expr)
-        if etype == <PyTypeObject*>_ExprConst:
+        if etype == <PyTypeObject*>ExprConst:
             const_exprs.append(expr)
-        elif etype == <PyTypeObject*>_ExprAdd:
-            exprs.extend(expr.exprs)
-            if expr.const:
-                const_exprs.append(expr.const)
+        elif etype == <PyTypeObject*>ExprAdd:
+            exprs.extend((<ExprAdd>expr).exprs)
+            if (<ExprAdd>expr).konst:
+                const_exprs.append((<ExprAdd>expr).konst)
         else:
             exprs.append(expr)
 
-    const_expr = _ExprConst.combine(const_exprs)
-    if not exprs:
-        return const_expr or _ExprConst(32, 0)
+    const_expr = CombineConsts(const_exprs)
+    if len(exprs) == 0:
+        return const_expr or ExprConst(32, 0)
     elif len(exprs) == 1 and not const_expr:
         return exprs[0]
     else:
-        return _ExprAdd(exprs, const_expr)
+        return ExprAdd(exprs, const_expr)
 
 
-def Neg(expr):
-    return ExprNeg(exprize(expr))
+cdef Expr Add(expr0, expr1):
+    return AddMany((expr0, expr1))
 
 
-def Cast(type, value):
-    return ExprCast(type, exprize(value))
-
-
-def Cond(cond, exprT, exprF):
-    return ExprCond(exprize(cond), exprize(exprT), exprize(exprF))
+cdef Expr Sub(expr0, expr1):
+    return Add(expr0, Neg(expr1))
