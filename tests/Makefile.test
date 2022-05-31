@@ -11,7 +11,7 @@ clean:
 build:
 	export PATH="/usr/lib/ccache:$$PATH"; python3 setup.py build -j4
 
-install:
+install: build
 	export PATH="/usr/lib/ccache:$$PATH"; python3 setup.py install --user
 
 test:
