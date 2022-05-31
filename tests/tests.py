@@ -258,7 +258,7 @@ def _():
     return values
 
 
-@Testing('linear')
+@Testing('alinear')
 def _():
     values = []
 

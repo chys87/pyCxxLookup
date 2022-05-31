@@ -35,7 +35,7 @@
 import threading
 
 cimport cython
-from cpython.ref cimport PyObject
+from cpython.object cimport PyObject, PyTypeObject, Py_TYPE
 from libc.stdint cimport int64_t, uint32_t, uint64_t
 from libcpp.vector cimport vector
 
@@ -1232,24 +1232,30 @@ def Add(*in_exprs):
     exprs = []
     const_exprs = []
 
+    _ExprConst = ExprConst
+    _ExprAdd = ExprAdd
+
+    cdef PyTypeObject* etype
+
     for expr in in_exprs:
         expr = exprize(expr)
-        if expr.IS_CONST:
+        etype = Py_TYPE(expr)
+        if etype == <PyTypeObject*>_ExprConst:
             const_exprs.append(expr)
-        elif expr.IS_ADD:
+        elif etype == <PyTypeObject*>_ExprAdd:
             exprs.extend(expr.exprs)
             if expr.const:
                 const_exprs.append(expr.const)
         else:
             exprs.append(expr)
 
-    const_expr = ExprConst.combine(const_exprs)
+    const_expr = _ExprConst.combine(const_exprs)
     if not exprs:
-        return const_expr or Const(32, 0)
+        return const_expr or _ExprConst(32, 0)
     elif len(exprs) == 1 and not const_expr:
         return exprs[0]
     else:
-        return ExprAdd(exprs, const_expr)
+        return _ExprAdd(exprs, const_expr)
 
 
 def Neg(expr):
