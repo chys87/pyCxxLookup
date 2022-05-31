@@ -377,7 +377,8 @@ def profiling(func):
         import pstats
         import time
 
-        wall_clock = time.time()
+        wall_clock = time.monotonic_ns()
+        cpu_clock = time.process_time_ns()
 
         __profiler_active = True
         pr = __new_profile()
@@ -392,8 +393,13 @@ def profiling(func):
 
         pr.disable()
         __profiler_active = False
-        wall_time = time.time() - wall_clock
+        wall_time = time.monotonic_ns() - wall_clock
+        cpu_time = time.process_time_ns() - cpu_clock
+        wall_time *= 1e-9
+        cpu_time *= 1e-9
         print(f'Wall time: {wall_time:.3f} seconds')
+        print(f'CPU time: {cpu_time:.3f} seconds')
+        print(f'parallelization: {cpu_time/wall_time:.3f}')
 
         ps = pstats.Stats(pr, *__thread_profiles, stream=sys.stderr)
         __thread_profiles.clear()
