@@ -38,6 +38,7 @@ import os
 import sys
 
 from Cython.Build import cythonize
+from Cython.Compiler import Options
 import numpy as np
 
 
@@ -66,6 +67,10 @@ def main():
         Extension('cxxlookup.codegen', ['cxxlookup/codegen.pyx'],
                   libraries=['absl_raw_hash_set', 'absl_hash']),
     ]
+
+    Options.error_on_unknown_names = True
+    Options.cache_builtins = True
+    Options.buffer_max_dims = 2
 
     setup(name='cxxlookup',
           version='1.0',
