@@ -36,10 +36,6 @@ from numpy cimport ndarray
 
 from .pyx_helpers cimport Frac, make_frac, make_frac_fast
 
-@cython.profile(False)
-cdef inline c_bool is_pow2(int64_t v) nogil:
-    return v > 0 and not (v & (v - 1))
-
 
 cdef float linregress_slope(uint32_t[::1] y)
 

@@ -39,6 +39,8 @@ namespace cxxlookup {
 
 inline uint32_t bit_length(uint64_t v) { return 64 - __builtin_clzll(v); }
 
+inline bool is_pow2(int64_t v) { return v && !(v & (v - 1)); }
+
 constexpr uint64_t gcd(uint64_t a, uint64_t b) {
   if (a < b) std::swap(a, b);
   while (b) {

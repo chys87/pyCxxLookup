@@ -47,8 +47,7 @@ from . import _speedups
 
 from numpy cimport ndarray
 
-from .cutils cimport is_pow2
-from .pyx_helpers cimport flat_hash_set
+from .pyx_helpers cimport bit_length, flat_hash_set, is_pow2
 
 
 # Signed types only allowed for intermediate values
@@ -699,8 +698,8 @@ cdef class ExprMul(ExprBinary):
                 return Const(32, 0)
             elif rv == 1:
                 return left
-            elif is_pow2(rv):
-                expr = ExprLShift(left, Const(32, rv.bit_length() - 1))
+            elif rv > 0 and is_pow2(rv):
+                expr = ExprLShift(left, Const(32, bit_length(rv) - 1))
                 return expr.optimize()
 
             # (a + c1) * c2 ==> (a * c2 + c1 * c2)
@@ -761,8 +760,8 @@ cdef class ExprDiv(ExprBinary):
                 raise ZeroDivisionError
             elif rv == 1:
                 return left
-            elif is_pow2(rv):
-                expr = ExprRShift(left, Const(32, rv.bit_length() - 1))
+            elif rv > 0 and is_pow2(rv):
+                expr = ExprRShift(left, Const(32, bit_length(rv) - 1))
                 return expr.optimize()
 
         return self
@@ -828,7 +827,7 @@ cdef class ExprAnd(ExprBinary):
         if right_const and right_value and \
                 type(left) is ExprAdd and (<ExprAdd>left).konst:
             rv = right_value
-            bt = rv.bit_length() + 1
+            bt = bit_length(rv) + 1
             c1 = (<ExprAdd>left).konst.value
             c1p = c1 & ((1 << bt) - 1)
             # If its high bit is set, make it negative

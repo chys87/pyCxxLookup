@@ -29,6 +29,7 @@
 
 
 from libc.stdint cimport int64_t, uint32_t, uint64_t
+from libcpp cimport bool as c_bool
 from libcpp.utility cimport pair
 
 
@@ -41,17 +42,18 @@ cdef extern from "<cmath>" nogil:
 
 
 cdef extern from "pyx_helpers.h" namespace "cxxlookup" nogil:
-    uint32_t bit_length(uint64_t)
+    uint32_t bit_length(uint64_t) nogil
+    c_bool is_pow2(uint64_t) nogil
 
-    uint64_t gcd(uint64_t, uint64_t)
+    uint64_t gcd(uint64_t, uint64_t) nogil
 
     cdef cppclass Frac:
         int64_t numerator
         uint64_t denominator
-        double to_double()
+        double to_double() nogil
 
-    Frac make_frac(int64_t, uint64_t)
-    Frac make_frac_fast(int64_t, uint64_t)
+    Frac make_frac(int64_t, uint64_t) nogil
+    Frac make_frac_fast(int64_t, uint64_t) nogil
 
 
 cdef extern from "<absl/container/flat_hash_set.h>" namespace "absl" nogil:
