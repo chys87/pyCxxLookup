@@ -59,7 +59,7 @@ from numpy cimport ndarray
 
 from .cutils cimport (
     Frac, make_frac, make_frac_fast, double_as_frac, limit_denominator,
-    linear_reduce, linregress_slope)
+    linear_reduce, linregress_slope, prepare_strides, PrepareStrideResult)
 from .expr cimport *
 from .expr cimport const_type, type_max, type_name
 from .pyx_helpers cimport bit_length, flat_hash_set
@@ -529,31 +529,35 @@ cdef _gen_strides(uint32_t lo, ndarray values, uint32_t num,
 
     Strides are consecutive values that are similar in value
     '''
-    res = []
-    values_nonzeros = np.count_nonzero(values)
-    cdef uint32_t stride = 4096
-    while stride >= 2:
-        if stride * 8 > num:
-            stride >>= 1
-            continue
-        base_values = utils.np_min_by_chunk(values, stride)
-        delta = values - np.repeat(base_values, stride)[:num]
-        if (np.count_nonzero(delta) < values_nonzeros / (stride * .9)
-                or bit_length(utils.np_max(delta)) <= maxv_bits * 3 // 4):
+    def try_gen_stride(uint32_t stride):
+        cdef PrepareStrideResult psr = prepare_strides(values, stride)
+        if (psr.delta_nonzeros < values_nonzeros / (stride * .9)
+                or bit_length(psr.delta_max) <= maxv_bits * 3 // 4):
             base_inexpr = Div(inexpr_base0, stride)
             base_expr = _make_code(
-                    mcfr, 0, base_values,
+                    mcfr, 0, psr.base_values,
                     table_name + '_stride{}'.format(stride),
                     base_inexpr, base_inexpr, base_inexpr, addition=addition,
                     maxdepth=maxdepth-1, uniqs=None, ctrl=SKIP_STRIDE)
             delta_expr = _make_code(
-                    mcfr, lo, delta,
+                    mcfr, lo, psr.delta,
                     table_name + '_stride{}delta'.format(stride),
                     inexpr, inexpr_long, inexpr_base0,
                     addition=0, maxdepth=maxdepth-1, uniqs=None, ctrl=0)
-            res.append(Add(base_expr, delta_expr))
-        stride >>= 1
-    return res
+            return Add(base_expr, delta_expr)
+
+    try_strides = []
+    cdef uint32_t values_nonzeros = np.count_nonzero(values)
+    cdef uint32_t stride = 2
+    while stride <= 4096:
+        if stride * 8 > num:
+            break
+        try_strides.append(stride)
+        stride <<= 1
+
+    try_strides.reverse()
+    res = utils.thread_pool_map(mcfr.thread_pool, try_gen_stride, try_strides)
+    return [x for x in res if x is not None]
 
 
 cdef _gen_packed(uint32_t lo, ndarray values, uint32_t num, uint32_t uniq,

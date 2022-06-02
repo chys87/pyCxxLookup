@@ -1,6 +1,7 @@
 # distutils: language=c++
 # cython: language_level=3
 # cython: profile=True
+# cython: cdivision=True
 
 # Copyright (c) 2014-2022, chys <admin@CHYS.INFO>
 # All rights reserved.
@@ -38,6 +39,7 @@ import numpy as np
 cimport cython
 from libc.stdint cimport int64_t, uintptr_t, uint32_t, uint64_t
 from libcpp cimport bool as c_bool
+from libcpp.utility cimport pair
 
 from .pyx_helpers cimport abs as cpp_abs
 
@@ -108,7 +110,7 @@ cdef float linregress_slope(uint32_t[::1] y):
     '''
     cdef int n = len(y)
 
-    if n < 128:
+    if n < 1024:
         if n < 2:
             return 0
         return linregress_slope_internal(y, n)
@@ -234,8 +236,78 @@ cdef linear_reduce(uint32_t[::1] values, Frac slope):
     res = np.empty(n, dtype=np.int64)
     cdef int64_t[::1] res_values = res
 
-    with nogil:
+    if n < 1024:
         for i in range(n):
             res_values[i] = values[i] - i * numerator // <int64_t>denominator
+    else:
+        with nogil:
+            for i in range(n):
+                res_values[i] = \
+                    values[i] - i * numerator // <int64_t>denominator
 
+    return res
+
+
+cdef class PrepareStrideResult:
+    pass
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cdef pair[uint32_t, uint32_t] __prepare_strides(
+        const uint32_t[::1] values, uint32_t stride,
+        uint32_t[::1] base_values, uint32_t[::1] delta) nogil:
+    cdef uint32_t n = len(values)
+    cdef uint32_t base_n = (n + stride - 1) // stride
+    cdef uint32_t k = 0
+    cdef uint32_t i = 0
+    cdef uint32_t j
+    cdef uint32_t upper
+    cdef uint32_t minv
+    cdef uint32_t delta_max = 0
+    cdef uint32_t delta_nonzeros = 0
+    cdef uint32_t v
+    while i < n:
+        upper = min(i + stride, n)
+        minv = values[i]
+        for j in range(i + 1, upper):
+            v = values[j]
+            if v < minv:
+                minv = v
+        base_values[k] = minv
+        for j in range(i, upper):
+            v = values[j] - minv
+            delta[j] = v
+            if v != 0:
+                delta_nonzeros += 1
+            if v > delta_max:
+                delta_max = v
+        k += 1
+        i += stride
+
+    return pair[uint32_t, uint32_t](delta_nonzeros, delta_max)
+
+
+cdef PrepareStrideResult prepare_strides(uint32_t[::1] values,
+                                         uint32_t stride):
+    cdef uint32_t n = len(values)
+    cdef uint32_t base_n = (n + stride - 1) // stride
+    cdef PrepareStrideResult res = \
+        PrepareStrideResult.__new__(PrepareStrideResult)
+    res.base_values = np.empty(base_n, dtype=np.uint32)
+    res.delta = np.empty(n, dtype=np.uint32)
+
+    cdef uint32_t[::1] base_values_view = res.base_values
+    cdef uint32_t[::1] delta_view = res.delta
+    cdef pair[uint32_t, uint32_t] r
+
+    if n < 1024 // 4:
+        r = __prepare_strides(
+            values, stride, base_values_view, delta_view)
+    else:
+        with nogil:
+            r = __prepare_strides(
+                values, stride, base_values_view, delta_view)
+    res.delta_nonzeros = r.first
+    res.delta_max = r.second
     return res
