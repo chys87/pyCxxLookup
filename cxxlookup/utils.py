@@ -383,26 +383,32 @@ def profiling(func):
         pr = __new_profile()
         pr.enable()
         try:
-            return func(*args, **kwargs)
-
-        finally:
+            res = func(*args, **kwargs)
+        except Exception:
             pr.disable()
             __profiler_active = False
-            wall_time = time.time() - wall_clock
-            print(f'Wall time: {wall_time:.3f} seconds')
-
-            ps = pstats.Stats(pr, *__thread_profiles, stream=sys.stderr)
             __thread_profiles.clear()
+            raise
 
-            stat_count = 30
-            ps.sort_stats('cumulative', 'stdname')
-            ps.print_stats(stat_count)
+        pr.disable()
+        __profiler_active = False
+        wall_time = time.time() - wall_clock
+        print(f'Wall time: {wall_time:.3f} seconds')
 
-            ps.sort_stats('tottime', 'stdname')
-            ps.print_stats(stat_count)
+        ps = pstats.Stats(pr, *__thread_profiles, stream=sys.stderr)
+        __thread_profiles.clear()
 
-            if os.environ.get('pyCxxLookup_Profiling_Callers'):
-                ps.print_callers()
+        stat_count = 30
+        ps.sort_stats('cumulative', 'stdname')
+        ps.print_stats(stat_count)
+
+        ps.sort_stats('tottime', 'stdname')
+        ps.print_stats(stat_count)
+
+        if os.environ.get('pyCxxLookup_Profiling_Callers'):
+            ps.print_callers()
+
+        return res
 
     return _func
 
