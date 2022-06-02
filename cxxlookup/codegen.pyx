@@ -57,9 +57,7 @@ from libcpp.vector cimport vector
 
 from numpy cimport ndarray
 
-from .cutils cimport (
-    Frac, make_frac, make_frac_fast, double_as_frac, limit_denominator,
-    linear_reduce, linregress_slope, prepare_strides, PrepareStrideResult)
+from .cutils cimport *
 from .expr cimport *
 from .expr cimport const_type, type_max, type_name
 from .pyx_helpers cimport bit_length, flat_hash_set
@@ -470,6 +468,7 @@ cdef _prepare_almost_linear_tasks(ndarray values, uint32_t num,
     cdef uint32_t best_bits = maxv_bits
     cdef uint32_t reduced_uniq
     cdef uint32_t reduced_maxv_bits
+    cdef LinearReduceResult lrs
 
     cdef vector[SlopePair] slopes = _gen_possible_slopes(values)
 
@@ -481,14 +480,9 @@ cdef _prepare_almost_linear_tasks(ndarray values, uint32_t num,
     for slope_pair in slopes:
         slope_num = slope_pair.first
         slope_denom = slope_pair.second
-        reduced_values = linear_reduce(
-            values, make_frac_fast(slope_num, slope_denom))
-        # Negative values may cause problems
-        offset = utils.np_min(reduced_values)
-        reduced_values = np.subtract(reduced_values, offset,
-                                     dtype=np.uint32, casting='unsafe')
+        lrs = linear_reduce(values, make_frac_fast(slope_num, slope_denom))
         # Be careful to avoid infinite recursion
-        reduced_uniqs = utils.np_unique(reduced_values)
+        reduced_uniqs = utils.np_unique(lrs.reduced_values)
         reduced_uniq = reduced_uniqs.shape[0]
         reduced_maxv_bits = bit_length(reduced_uniqs[-1])
         if (reduced_uniq * 2 <= uniq and reduced_uniq < best_uniq) or \
@@ -496,7 +490,7 @@ cdef _prepare_almost_linear_tasks(ndarray values, uint32_t num,
             best_uniq = min(best_uniq, reduced_uniq)
             best_bits = min(best_bits, reduced_maxv_bits)
 
-            linear_tasks.append((reduced_values, reduced_uniqs, offset,
+            linear_tasks.append((lrs.reduced_values, reduced_uniqs, lrs.offset,
                                  slope_num, slope_denom))
 
     return linear_tasks

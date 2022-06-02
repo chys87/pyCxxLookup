@@ -17,7 +17,13 @@ cdef float linregress_slope(uint32_t[::1] y)
 cdef Frac double_as_frac(double)
 cdef Frac limit_denominator(Frac, uint64_t max_denominator) nogil
 
-cdef linear_reduce(uint32_t[::1] values, Frac slope)
+
+cdef class LinearReduceResult:
+    cdef ndarray reduced_values
+    cdef int64_t offset
+
+
+cdef LinearReduceResult linear_reduce(uint32_t[::1] values, Frac slope)
 
 
 cdef class PrepareStrideResult:

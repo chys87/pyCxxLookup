@@ -38,6 +38,7 @@ import numpy as np
 
 cimport cython
 from libc.stdint cimport int64_t, uintptr_t, uint32_t, uint64_t
+from libc.stdlib cimport malloc, free
 from libcpp cimport bool as c_bool
 from libcpp.utility cimport pair
 
@@ -214,37 +215,70 @@ cdef Frac limit_denominator(Frac self, uint64_t max_denominator) nogil:
     return make_frac_fast(-new_n_abs if negative else new_n_abs, new_d)
 
 
-@cython.cdivision(True)
+cdef class LinearReduceResult:
+    pass
+
+
 @cython.boundscheck(False)
 @cython.wraparound(False)
-cdef linear_reduce(uint32_t[::1] values, Frac slope):
+cdef int64_t __linear_reduce(
+        const uint32_t[::1] values, int64_t numerator,
+        uint64_t denominator, uint32_t[::1] reduced_values) nogil:
+
+    cdef Py_ssize_t i
+    cdef Py_ssize_t n = len(values)
+    # We're not using PyMem_Malloc/PyMem_Free because they require GIL
+    cdef int64_t tmp_buffer[1024]
+    cdef int64_t* tmp
+    if n > 1024:
+        tmp = <int64_t*>malloc(n * sizeof(int64_t))
+    else:
+        tmp = tmp_buffer
+
+    cdef int64_t v
+    cdef int64_t offset = 0x7fffffffffffffffll
+
+    for i in range(n):
+        v = values[i] - i * numerator // <int64_t>denominator
+        tmp[i] = v
+        if v < offset:
+            offset = v
+
+    for i in range(n):
+        reduced_values[i] = tmp[i] - offset
+
+    if tmp != tmp_buffer:
+        free(tmp)
+    return offset
+
+
+cdef LinearReduceResult linear_reduce(uint32_t[::1] values, Frac slope):
     '''
-    Same as
+    tmp =
         values -
         np.arange(0, numerator * n, numerator, dtype=np.int64) // denominator
+    res.offset = np.min(tmp)
+    res.values = np.subtract(tmp, offset, dtype=np.uint32, casting='unsafe')
 
     except that division is done in C semantics
     (round toward 0, rather than -infinity)
-
-    Input dtype is uint32, but we output int64 to handle negative values
-    properly
     '''
-    cdef Py_ssize_t i
     cdef Py_ssize_t n = len(values)
     cdef int64_t numerator = slope.numerator
     cdef uint64_t denominator = slope.denominator
-    res = np.empty(n, dtype=np.int64)
-    cdef int64_t[::1] res_values = res
 
-    if n < 1024:
-        for i in range(n):
-            res_values[i] = values[i] - i * numerator // <int64_t>denominator
+    cdef LinearReduceResult res = \
+        LinearReduceResult.__new__(LinearReduceResult)
+    res.reduced_values = np.empty(n, dtype=np.uint32)
+
+    cdef uint32_t[::1] out_view = res.reduced_values
+
+    if n < 256:
+        res.offset = __linear_reduce(values, numerator, denominator, out_view)
     else:
         with nogil:
-            for i in range(n):
-                res_values[i] = \
-                    values[i] - i * numerator // <int64_t>denominator
-
+            res.offset = __linear_reduce(values, numerator, denominator,
+                                         out_view)
     return res
 
 
