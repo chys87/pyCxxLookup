@@ -45,40 +45,9 @@ from libcpp.utility cimport pair
 from .pyx_helpers cimport abs as cpp_abs
 
 
-class cached_property:
-    '''
-    >>> class Test:
-    ...     @cached_property
-    ...     def f(self):
-    ...         print('x')
-    ...         return 2
-    >>> a = Test()
-    >>> a.f
-    x
-    2
-    >>> a.f
-    2
-    '''
-    def __init__(self, func):
-        self.func = func
-        self.__doc__ = func.__doc__
-        self.__name__ = func.__name__
-        self.__module__ = func.__module__
-
-    @cython.profile(False)
-    def __get__(self, obj, cls):
-        if obj is None:
-            return self
-
-        func = self.func
-        res = obj.__dict__[func.__name__] = func(obj)
-        return res
-
-
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.nonecheck(False)
-@cython.cdivision(True)
 @cython.profile(False)
 cdef inline float linregress_slope_internal(uint32_t[::1] y, int n) nogil:
     #          sigma (y_i - y_bar)(x_i - x_bar)
@@ -157,7 +126,6 @@ def test_limit_denominator(double num, uint64_t max_denominator):
     return (frac.numerator, frac.denominator)
 
 
-@cython.cdivision(True)
 cdef Frac limit_denominator(Frac self, uint64_t max_denominator) nogil:
     if max_denominator < 1 or self.denominator == 0:
         return self

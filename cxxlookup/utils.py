@@ -44,9 +44,6 @@ from . import cutils
 from . import _speedups
 
 
-cached_property = cutils.cached_property
-
-
 def make_numpy_array(values):
     return np.array(values, dtype=np.uint32)
 

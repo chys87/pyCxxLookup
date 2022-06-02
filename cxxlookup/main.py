@@ -52,15 +52,19 @@ class CxxLookup:
             hole = int(utils.most_common_element(self._values))
         self._hole = hole
         self._opt = opt
+        self._code = None
 
     def make_code(self) -> str:
         return self.code
 
-    @utils.cached_property
+    @property
     @utils.profiling
     def code(self) -> str:
-        return codegen.make_code(self._func_name, self._base, self._values,
-                                 self._hole, self._opt)
+        if self._code is None:
+            self._code = codegen.make_code(
+                self._func_name, self._base, self._values, self._hole,
+                self._opt)
+        return self._code
 
     def test(self, cxx_name: str | None = None) -> None:
         run_test(self._func_name, self._base, self._values, self._hole,
