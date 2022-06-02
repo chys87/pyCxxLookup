@@ -45,6 +45,8 @@ from . import cutils
 from . import utils
 from . import _speedups
 
+from numpy cimport ndarray
+
 from .cutils cimport is_pow2
 from .pyx_helpers cimport flat_hash_set
 
@@ -1125,7 +1127,7 @@ cdef ExprCond Cond(cond, exprT, exprF):
 
 @cython.final
 cdef class ExprTable(Expr):
-    def __cinit__(self, uint32_t type, str name, values, Expr var,
+    def __cinit__(self, uint32_t type, str name, ndarray values, Expr var,
                   int32_t offset):
         self._has_table = 1
         self.rtype = type

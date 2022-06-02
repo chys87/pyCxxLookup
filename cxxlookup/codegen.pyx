@@ -55,6 +55,8 @@ from libcpp cimport bool as c_bool
 from libcpp.utility cimport move as std_move, pair
 from libcpp.vector cimport vector
 
+from numpy cimport ndarray
+
 from .cutils cimport (
     Frac, make_frac, make_frac_fast, double_as_frac, limit_denominator,
     linear_reduce, linregress_slope)
@@ -271,8 +273,9 @@ cdef _gen_alinear(MakeCodeForRange mcfr, uint32_t lo, str table_name,
 
 
 @cython.boundscheck(False)
-cdef _gen_uniq2_code(values, uint32_t[::1] uniqs, uint32_t num, Expr inexpr,
-                     Expr inexpr_base0, uint32_t lo, int addition):
+cdef _gen_uniq2_code(ndarray values, uint32_t[::1] uniqs, uint32_t num,
+                     Expr inexpr, Expr inexpr_base0, uint32_t lo,
+                     int addition):
     cdef uint32_t value0
     cdef uint32_t value1
     cdef uint64_t bit_test_mask
@@ -333,7 +336,7 @@ cdef _gen_uniq2_code(values, uint32_t[::1] uniqs, uint32_t num, Expr inexpr,
         return expr
 
 
-cdef _gen_split(uint32_t lo, values, Expr inexpr, Expr inexpr_long,
+cdef _gen_split(uint32_t lo, ndarray values, Expr inexpr, Expr inexpr_long,
                 Expr inexpr_base0, uint32_t num, uint32_t maxv,
                 uint32_t maxv_bits, str table_name, int addition, int maxdepth,
                 MakeCodeForRange mcfr, uint32_t threshold):
@@ -400,7 +403,7 @@ cdef _gen_pack_as_64_code(uint32_t[::1] values, inexpr_base0,
 
 
 ctypedef pair[int32_t, uint32_t] SlopePair
-cdef vector[SlopePair] _gen_possible_slopes(np_values):
+cdef vector[SlopePair] _gen_possible_slopes(ndarray np_values):
     '''Is values almost linear?
     Return likely slopes list[(numerator, denominator), ...]
     Returned list is ordered by denominator from smallest to biggest
@@ -459,8 +462,8 @@ cdef vector[SlopePair] _gen_possible_slopes(np_values):
     return std_move(res)
 
 
-cdef _prepare_almost_linear_tasks(values, uint32_t num, uint32_t uniq,
-                                  uint32_t maxv_bits):
+cdef _prepare_almost_linear_tasks(ndarray values, uint32_t num,
+                                  uint32_t uniq, uint32_t maxv_bits):
     '''Prepare for "almost linear" reduction: values = slope * index + reduced
     '''
     cdef uint32_t best_uniq = uniq
@@ -499,7 +502,7 @@ cdef _prepare_almost_linear_tasks(values, uint32_t num, uint32_t uniq,
     return linear_tasks
 
 
-def _test_prepare_almost_linear_tasks(values):
+def _test_prepare_almost_linear_tasks(ndarray values):
     '''
     >>> v = np.array([54025 - (i + (i % 17)) // 7 for i in range(16384)],
     ...              dtype=np.uint32)
@@ -517,7 +520,8 @@ def _test_prepare_almost_linear_tasks(values):
         bit_length(np.max(values)))
 
 
-cdef _gen_strides(uint32_t lo, values, uint32_t num, uint32_t maxv_bits,
+cdef _gen_strides(uint32_t lo, ndarray values, uint32_t num,
+                  uint32_t maxv_bits,
                   Expr inexpr, Expr inexpr_long, Expr inexpr_base0,
                   int addition, int maxdepth, str table_name,
                   MakeCodeForRange mcfr):
@@ -552,7 +556,7 @@ cdef _gen_strides(uint32_t lo, values, uint32_t num, uint32_t maxv_bits,
     return res
 
 
-cdef _gen_packed(uint32_t lo, values, uint32_t num, uint32_t uniq,
+cdef _gen_packed(uint32_t lo, ndarray values, uint32_t num, uint32_t uniq,
                  uint32_t maxv, uint32_t maxv_bits, Expr inexpr,
                  Expr inexpr_long, Expr inexpr_base0,
                  int addition, int maxdepth, str table_name,
@@ -609,7 +613,7 @@ cdef _gen_packed(uint32_t lo, values, uint32_t num, uint32_t uniq,
 
 
 @cython.boundscheck(False)
-cdef _gen_gcd(uint32_t lo, values, uint32_t maxv, Expr inexpr,
+cdef _gen_gcd(uint32_t lo, ndarray values, uint32_t maxv, Expr inexpr,
               Expr inexpr_long, Expr inexpr_base0, str table_name,
               int addition, int maxdepth, MakeCodeForRange mcfr):
     cdef uint32_t gcd = utils.gcd_reduce(values)
@@ -633,7 +637,7 @@ cdef _gen_gcd(uint32_t lo, values, uint32_t maxv, Expr inexpr,
         return None, True
 
 
-cdef _gen_lo_hi(uint32_t lo, values, uint32_t num, uint32_t uniq,
+cdef _gen_lo_hi(uint32_t lo, ndarray values, uint32_t num, uint32_t uniq,
                 uint32_t maxv_bits, Expr inexpr, Expr inexpr_long,
                 Expr inexpr_base0, addition, int maxdepth, str table_name,
                 MakeCodeForRange mcfr, c_bool skip_split_4bits_hi_lo):
@@ -704,7 +708,7 @@ cdef _gen_lo_hi(uint32_t lo, values, uint32_t num, uint32_t uniq,
     return res
 
 
-cdef _gen_two_level_lookup(values, uniqs, uint32_t uniq, uint32_t lo,
+cdef _gen_two_level_lookup(ndarray values, uniqs, uint32_t uniq, uint32_t lo,
                            str table_name,
                            Expr inexpr, Expr inexpr_long, Expr inexpr_base0,
                            int addition, int maxdepth, MakeCodeForRange mcfr):
@@ -728,8 +732,8 @@ cdef _gen_two_level_lookup(values, uniqs, uint32_t uniq, uint32_t lo,
                        uniqs=uniqs, ctrl=0)
 
 
-cdef object __var_c = ExprFixedVar(32, 'c')
-cdef object __var_cl = ExprFixedVar(64, 'cl')
+cdef ExprFixedVar __var_c = ExprFixedVar(32, 'c')
+cdef ExprFixedVar __var_cl = ExprFixedVar(64, 'cl')
 
 
 cdef class MakeCodeForRange:
@@ -737,7 +741,7 @@ cdef class MakeCodeForRange:
     cdef object thread_pool
 
 
-cdef _make_code_for_range(uint32_t lo, values, str table_name, opt,
+cdef _make_code_for_range(uint32_t lo, ndarray values, str table_name, opt,
                           thread_pool):
     mcfr = MakeCodeForRange()
     mcfr.opt = opt
@@ -798,7 +802,7 @@ cdef _make_code_for_range(uint32_t lo, values, str table_name, opt,
 
 # We don't use default values for arguments.
 # Cython implements them in a stupid way.
-cdef Expr _make_code(MakeCodeForRange mcfr, uint32_t lo, values,
+cdef Expr _make_code(MakeCodeForRange mcfr, uint32_t lo, ndarray values,
                      str table_name,
                      Expr inexpr, Expr inexpr_long, Expr inexpr_base0,
                      int addition, int maxdepth, uniqs, uint32_t ctrl):
@@ -821,7 +825,8 @@ cdef Expr _make_code(MakeCodeForRange mcfr, uint32_t lo, values,
 
 
 @cython.boundscheck(False)
-cdef _yield_code(MakeCodeForRange mcfr, uint32_t lo, values, str table_name,
+cdef _yield_code(MakeCodeForRange mcfr, uint32_t lo, ndarray values,
+                 str table_name,
                  Expr inexpr, Expr inexpr_long, Expr inexpr_base0,
                  int addition, int maxdepth, uniqs, uint32_t ctrl):
     """
