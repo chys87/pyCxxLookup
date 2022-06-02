@@ -61,10 +61,13 @@ def main():
                   include_dirs=[np.get_include()],
                   libraries=['absl_raw_hash_set', 'absl_hash']),
         Extension('cxxlookup.cutils', ['cxxlookup/cutils.pyx'],
+                  include_dirs=[np.get_include()],
                   libraries=['absl_raw_hash_set', 'absl_hash']),
         Extension('cxxlookup.expr', ['cxxlookup/expr.pyx'],
+                  include_dirs=[np.get_include()],
                   libraries=['absl_raw_hash_set', 'absl_hash']),
         Extension('cxxlookup.codegen', ['cxxlookup/codegen.pyx'],
+                  include_dirs=[np.get_include()],
                   libraries=['absl_raw_hash_set', 'absl_hash']),
     ]
 
