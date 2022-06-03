@@ -898,7 +898,7 @@ cdef inline uint8_t comp_negate(uint8_t op) nogil:
 @cython.final
 cdef class ExprCompare(ExprBinary):
     cdef c_bool is_predicate(self):
-        return False
+        return True
 
     def __cinit__(self, *args):
         self._negated = None
@@ -1082,8 +1082,7 @@ cdef class ExprCond(Expr):
 
         # PREDICATE ? 1 : 0 ==> Cast(PREDICATE)
         if (cond.is_predicate() and \
-                type(exprT) is ExprConst and \
-                type(exprF) is ExprConst and
+                type(exprT) is ExprConst is type(exprF) and
                 (<ExprConst>exprT).value == 1 and
                 (<ExprConst>exprF).value == 0):
             return ExprCast(self.rtype, cond).optimize()
