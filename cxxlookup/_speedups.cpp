@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2014-2022, chys <admin@CHYS.INFO>
+Copyright (c) 2014-2023, chys <admin@CHYS.INFO>
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without modification,
@@ -36,7 +36,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#if __has_include(<x86intrin.h>)
+#if defined __i386__ || defined __x86_64__
 #include <x86intrin.h>
 #endif
 
