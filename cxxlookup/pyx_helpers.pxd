@@ -56,8 +56,8 @@ cdef extern from "pyx_helpers.h" namespace "cxxlookup" nogil:
     Frac make_frac_fast(int64_t, uint64_t) nogil
 
 
-cdef extern from "<absl/container/flat_hash_set.h>" namespace "absl" nogil:
-    cdef cppclass flat_hash_set[T,HASH=*,PRED=*,ALLOCATOR=*]:
+cdef extern from "ankerl_unordered_dense.h" namespace "ankerl::unordered_dense" nogil:
+    cdef cppclass flat_hash_set "ankerl::unordered_dense::set" [T,HASH=*,PRED=*,ALLOCATOR=*]:
         ctypedef T value_type
         cppclass iterator:
             T& operator*()

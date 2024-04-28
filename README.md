@@ -3,4 +3,4 @@ pyCxxLookup
 
 Generate C++ lookup functions with Python 3.
 
-I do regular forced updates to the `dev*` branches.
+This package uses [`ankerl::unordered_dense`](https://github.com/martinus/unordered_dense).

@@ -2,7 +2,7 @@
 # coding: utf-8
 # vim: set ts=4 sts=4 sw=4 expandtab cc=80:
 
-# Copyright (c) 2014, chys <admin@CHYS.INFO>
+# Copyright (c) 2014-2024, chys <admin@CHYS.INFO>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -58,17 +58,13 @@ def main():
 
     ext_modules = [
         Extension('cxxlookup._speedups', ['cxxlookup/_speedups.cpp'],
-                  include_dirs=[np.get_include()],
-                  libraries=['absl_raw_hash_set', 'absl_hash']),
+                  include_dirs=[np.get_include()]),
         Extension('cxxlookup.cutils', ['cxxlookup/cutils.pyx'],
-                  include_dirs=[np.get_include()],
-                  libraries=['absl_raw_hash_set', 'absl_hash']),
+                  include_dirs=[np.get_include()]),
         Extension('cxxlookup.expr', ['cxxlookup/expr.pyx'],
-                  include_dirs=[np.get_include()],
-                  libraries=['absl_raw_hash_set', 'absl_hash']),
+                  include_dirs=[np.get_include()]),
         Extension('cxxlookup.codegen', ['cxxlookup/codegen.pyx'],
-                  include_dirs=[np.get_include()],
-                  libraries=['absl_raw_hash_set', 'absl_hash']),
+                  include_dirs=[np.get_include()]),
     ]
 
     Options.error_on_unknown_names = True
