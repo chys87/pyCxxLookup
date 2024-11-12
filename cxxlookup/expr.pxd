@@ -1,4 +1,4 @@
-# Copyright (c) 2014-2022, chys <admin@CHYS.INFO>
+# Copyright (c) 2014-2024, chys <admin@CHYS.INFO>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -138,11 +138,13 @@ cdef ExprMul Mul(a, b)
 
 
 cdef class ExprDiv(ExprBinary):
+    cdef uint64_t _max_dividend
+
     cdef uint32_t overhead(self, uint32_t multiply)
     cdef Expr do_optimize(self)
 
 
-cdef ExprDiv Div(a, b)
+cdef ExprDiv Div(a, b, uint64_t max_dividend = ?)
 
 
 cdef class ExprMod(ExprBinary):

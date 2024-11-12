@@ -6,7 +6,7 @@
 #!/usr/bin/env python3
 # vim: set ts=4 sts=4 sw=4 expandtab cc=80:
 
-# Copyright (c) 2014-2022, chys <admin@CHYS.INFO>
+# Copyright (c) 2014-2024, chys <admin@CHYS.INFO>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -246,7 +246,7 @@ cdef _gen_linear(uint32_t[::1] values, Expr inexpr_base0, int addition):
 
 cdef _gen_alinear(MakeCodeForRange mcfr, uint32_t lo, str table_name,
                   Expr inexpr, Expr inexpr_long, Expr inexpr_base0,
-                  int addition, int maxdepth, args):
+                  uint32_t num, int addition, int maxdepth, args):
     reduced_values, reduced_uniqs, offset, slope_num, slope_denom = args
     if slope_num > 0:
         linear_key = f'alinear{slope_num}'
@@ -264,9 +264,11 @@ cdef _gen_alinear(MakeCodeForRange mcfr, uint32_t lo, str table_name,
                       ctrl=SKIP_ALMOST_LINEAR_REDUCE)
 
     if slope_num > 0:
-        res = Div(Mul(inexpr_base0, slope_num), slope_denom)
+        res = Div(Mul(inexpr_base0, slope_num), slope_denom,
+                  max_dividend=<uint64_t>(num - 1) * slope_num)
     else:
-        res = Neg(Div(Mul(inexpr_base0, -slope_num), slope_denom))
+        res = Neg(Div(Mul(inexpr_base0, -slope_num), slope_denom,
+                      max_dividend=<uint64_t>(num - 1) * -slope_num))
     return Add(res, expr)
 
 
@@ -959,7 +961,7 @@ cdef _yield_code(MakeCodeForRange mcfr, uint32_t lo, ndarray values,
         res.extend(utils.thread_pool_map(
             mcfr.thread_pool,
             partial(_gen_alinear, mcfr, lo, table_name, inexpr, inexpr_long,
-                    inexpr_base0, addition, maxdepth),
+                    inexpr_base0, num, addition, maxdepth),
             linear_tasks))
 
     # Consecutive values are similar

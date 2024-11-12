@@ -4,7 +4,7 @@
 # cython: cdivision=True
 
 
-# Copyright (c) 2014-2022, chys <admin@CHYS.INFO>
+# Copyright (c) 2014-2024, chys <admin@CHYS.INFO>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -39,6 +39,7 @@ cimport cython
 from cpython.object cimport PyObject, PyTypeObject, Py_TYPE
 from libc.stdint cimport int64_t, uint32_t, uint64_t
 from libcpp cimport bool as c_bool
+from libcpp.utility cimport pair
 from libcpp.vector cimport vector
 
 from . import cutils
@@ -736,9 +737,64 @@ cdef ExprMul Mul(a, b):
     return ExprMul(exprize(a), exprize(b))
 
 
+cdef bint verify_optimized_division(uint32_t max_dividend, uint32_t D, uint32_t M, uint32_t N):
+    if M == 0:
+        return False
+    if N == 0:
+        return M == D == 1
+
+    cdef uint32_t t = max_dividend - 1
+    if t * M >> N != t // D:
+        return False
+    t = t // D * D
+    if t == 0:
+        return True
+    if t * M >> N != t // D:
+        return False
+    if (t - 1) * M >> N != (t - 1) // D:
+        return False
+
+    t -= D
+    if t == 0:
+        return True
+    if t * M >> N != t // D:
+        return False
+    if (t - 1) * M >> N != (t - 1) // D:
+        return False
+
+    return True
+
+
+cdef pair[uint32_t, uint32_t] gen_optimized_division(uint32_t max_dividend, uint32_t D):
+    '''
+     x     x * M
+    --- = ------- (∀ x <= max_dividend)
+     D     2 ** N
+    '''
+    cdef pair[uint32_t, uint32_t] res
+    res.first = res.second = 0
+
+    if D == 0:
+        return res
+
+    cdef uint32_t N
+    cdef uint32_t M
+    for N in range(1, 31):
+        M = ((<uint64_t>1 << N) + D - 1) / D
+        if M % 2 == 0:
+            continue
+        if verify_optimized_division(max_dividend, D, M, N):
+            res.first = M
+            res.second = N
+            break
+
+    return res
+
+
 @cython.final
 cdef class ExprDiv(ExprBinary):
-    def __init__(self, Expr left, Expr right):
+    def __init__(self, Expr left, Expr right, uint64_t max_dividend = -1, /):
+        self._max_dividend = max_dividend
         if left.rtype < 32 or left.rtype == 63:
             left = ExprCast(max(32, left.rtype + 1), left)
         super().__init__(left, right)
@@ -746,6 +802,13 @@ cdef class ExprDiv(ExprBinary):
     def __str__(self):
         cdef Expr left = self.left
         cdef Expr right = self.right
+        if type(right) is ExprConst:
+            rv = (<ExprConst>right).value
+            if 0 < rv < 0x80000000 and self._max_dividend < 0x80000000:
+                od = gen_optimized_division(self._max_dividend, rv)
+                if od.first > 0:
+                    return f'({left} * {od.first} >> {od.second} /* / {rv} */)'
+
         if left.rtype >= right.rtype:
             return f'({left} / {right:U})'
         else:
@@ -770,8 +833,8 @@ cdef class ExprDiv(ExprBinary):
         return 7 * multiply
 
 
-cdef ExprDiv Div(a, b):
-    return ExprDiv(exprize(a), exprize(b))
+cdef ExprDiv Div(a, b, uint64_t max_dividend= -1):
+    return ExprDiv(exprize(a), exprize(b), max_dividend)
 
 
 @cython.final
